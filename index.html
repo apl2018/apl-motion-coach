@@ -1090,6 +1090,7 @@ let _lastKps=null,_lastCmp=null;
 let _coachOverlay=null; // {text, until}
 let _introUntil=0;     // epoch ms — show APL logo intro until this time
 let _recAudioCtx=null, _recAudioDest=null; // AudioContext for recording mix
+let _recStartTimer=null; // setTimeout handle for delayed recorder.start()
 
 // Play a 3-note ascending chime.
 // Routes into _recAudioDest (captured by MediaRecorder) AND ctx.destination (heard live).
@@ -1224,14 +1225,10 @@ async function startRecording(){
     if(!_compDrawing) return;
     compCtx.clearRect(0,0,cw,ch);
     // ── APL intro logo (first 2.5 s of recording) ──────────────────────────
-    if(Date.now()<_introUntil){
-      try{drawAPLIntro(compCtx,cw,ch);}catch(e){}
-    }else{
-      // Draw raw video at exact video resolution (sc=1, no offset)
-      try{compCtx.drawImage(vid,0,0,cw,ch);}catch(e){}
-      // Draw skeleton directly from last known keypoints at video coordinates
-      try{drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
-    }
+    // Draw raw video at exact video resolution (sc=1, no offset)
+    try{compCtx.drawImage(vid,0,0,cw,ch);}catch(e){}
+    // Draw skeleton directly from last known keypoints at video coordinates
+    try{drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
     // Draw coaching subtitle overlay — visible in saved recording
     if(_coachOverlay&&Date.now()<_coachOverlay.until){
       try{
@@ -1271,38 +1268,35 @@ async function startRecording(){
     compStream=new MediaStream(S.stream.getVideoTracks().map(t=>t.clone()));
   }
 
-  // Audio: AudioContext 믹싱 방식
-  // 차임음을 _recAudioDest에 직접 주입 → BT 연결 여부와 무관하게 녹음에 포함
-  // iOS 워크어라운드: priming 오실레이터로 MediaStreamDestination 스트림을 미리 활성화
+  // Audio: _recAudioCtx was pre-created in startLive() within user gesture context (iOS requirement)
+  // If available, wire up priming + mic → _recAudioDest for chime capture in recording
   try{
-    _recAudioCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:44100});
-    _recAudioDest=_recAudioCtx.createMediaStreamDestination();
-    // Priming: play a brief near-silent tone so iOS initializes the audio pipeline
-    const prOsc=_recAudioCtx.createOscillator();
-    const prGain=_recAudioCtx.createGain();
-    prGain.gain.value=0.0001;
-    prOsc.connect(prGain);prGain.connect(_recAudioDest);
-    prOsc.start(_recAudioCtx.currentTime);
-    prOsc.stop(_recAudioCtx.currentTime+0.25);
-    // Mic connected with zero gain — activates stream pipeline without capturing ambient sound
-    if(S.audioStream){
-      const micSrc=_recAudioCtx.createMediaStreamSource(S.audioStream);
-      const micGain=_recAudioCtx.createGain();
-      micGain.gain.value=0;
-      micSrc.connect(micGain);micGain.connect(_recAudioDest);
+    if(_recAudioCtx&&_recAudioCtx.state!=='closed'){
+      if(!_recAudioDest) _recAudioDest=_recAudioCtx.createMediaStreamDestination();
+      // Priming: brief silent tone to activate MediaStreamDestination stream on iOS
+      const prOsc=_recAudioCtx.createOscillator();
+      const prGain=_recAudioCtx.createGain();
+      prGain.gain.value=0.0001;
+      prOsc.connect(prGain);prGain.connect(_recAudioDest);
+      prOsc.start(_recAudioCtx.currentTime);
+      prOsc.stop(_recAudioCtx.currentTime+0.25);
+      // Mic with zero gain — activates pipeline without recording ambient sound
+      if(S.audioStream){
+        const micSrc=_recAudioCtx.createMediaStreamSource(S.audioStream);
+        const micGain=_recAudioCtx.createGain();
+        micGain.gain.value=0;
+        micSrc.connect(micGain);micGain.connect(_recAudioDest);
+      }
+      if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
+      _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
     }
-    if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
-    _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
   }catch(e){
-    console.warn('RecAudioCtx 실패, mic 폴백:',e);
+    console.warn('RecAudio setup 실패:',e);
     _recAudioCtx=null;_recAudioDest=null;
     if(S.audioStream){
       S.audioStream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t.clone());}catch(e2){}});
     }
   }
-
-  // APL 로고 인트로 0.1초
-  _introUntil=Date.now()+100;
 
   const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
   const mime=mimePriority.find(m=>MediaRecorder.isTypeSupported(m))||'video/mp4';
@@ -1312,12 +1306,21 @@ async function startRecording(){
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)S.recChunks.push(e.data);};
   S.recorder.onstop=saveRecording;
 
-  // Start draw loop and recorder together — intro is drawn from frame 1
+  // Pre-draw current video frame so canvas is never empty when recording starts
+  try{compCtx.drawImage(vid,0,0,cw,ch);drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
+
+  // Start draw loop immediately; delay recorder.start() 200ms so first recorded frame is clean live video
+  // (eliminates 0~0.12s black/intro issue at start of saved video)
   S.drawCompInterval=setInterval(drawComp,33);
-  try{S.recorder.start(100);}catch(e){console.warn('Recorder start:',e);}
-  $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
-  S.recSec=0;updateRecTime();
-  S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
+  _recStartTimer=setTimeout(()=>{
+    _recStartTimer=null;
+    if(S.recorder&&S.recorder.state==='inactive'){
+      try{S.recorder.start(100);}catch(e){console.warn('Recorder start:',e);}
+      $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
+      S.recSec=0;updateRecTime();
+      S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
+    }
+  },200);
 }
 function updateRecTime(){
   const m=String(Math.floor(S.recSec/60)).padStart(2,'0');
@@ -1328,6 +1331,7 @@ function stopRecording(){
   _compDrawing=false;
   _coachOverlay=null;
   _introUntil=0;
+  if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;} // cancel delayed start if still pending
   if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}
   $('rec-dot').classList.remove('on');$('rec-time').classList.remove('on');
@@ -1445,7 +1449,19 @@ async function startLive(){
   if(!S.ready) return;
   $('btn-main').disabled=true;
 
-  // ① Request mic permission FIRST — dialog shows immediately before countdown
+  // ① CRITICAL — iOS requires AudioContext creation in SYNCHRONOUS gesture handler
+  //    Must happen before ANY await, otherwise iOS blocks AudioContext entirely
+  fixIOSAudioRouting();
+  // Pre-create recording AudioContext here (user gesture still active, no await yet)
+  try{
+    if(!_recAudioCtx||_recAudioCtx.state==='closed'){
+      _recAudioCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:44100});
+      _recAudioDest=_recAudioCtx.createMediaStreamDestination();
+    }
+    _recAudioCtx.resume().catch(()=>{});
+  }catch(e){_recAudioCtx=null;_recAudioDest=null;}
+
+  // ② Request mic permission (async — user activation may expire here, but AudioContext already created)
   if(!S.audioStream){
     try{
       S.audioStream=await navigator.mediaDevices.getUserMedia({
@@ -1454,8 +1470,6 @@ async function startLive(){
       });
     }catch(e){console.warn('Mic permission denied:',e);}
   }
-  // ② Fix iOS audio routing (prevent volume drop after mic permission)
-  fixIOSAudioRouting();
 
   // ③ Now start 5s countdown
   const cdown=$('cdown'),cnum=$('cnum');
@@ -1718,25 +1732,7 @@ async function init(){
         if(vid.paused||vid.readyState<2) checkCameraHealth();
       }
     },3000);
-    $('cam-wrap').addEventListener('click',()=>{
-      if(!S.live&&!S.caps&&(vid.paused||vid.readyState<2)) restartCamera();
-    });
-  }catch(e){
-    $('i-msg').textContent='카메라 접근 실패.\nHTTPS 환경에서 열어주세요. (예: Netlify, GitHub Pages 등)';
-    console.error('Camera:',e);return;
-  }
-
-  $('i-msg').textContent='AI 포즈 감지 모델 다운로드 중...\n(최초 1회 약 10~30초, Wi-Fi 권장)';
-  try{
-    await tf.ready();
-    S.det=await poseDetection.createDetector(
-      poseDetection.SupportedModels.MoveNet,
-      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
-    );
-    if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
-    S.ready=true;
-    $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
-      speechSynthesis.getVoices();
+    $('cam-wrap').addEventListener  speechSynthesis.getVoices();
 }
 
 window.addEventListener('load',init);

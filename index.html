@@ -1685,4 +1685,39 @@ async function init(){
     // Periodic health check every 3s (lightweight — only acts if something is wrong)
     setInterval(()=>{
       if(!S.live&&!S.caps&&document.visibilityState==='visible'){
-        
+        if(vid.paused||vid.readyState<2) checkCameraHealth();
+      }
+    },3000);
+    $('cam-wrap').addEventListener('click',()=>{
+      if(!S.live&&!S.caps&&(vid.paused||vid.readyState<2)) restartCamera();
+    });
+  }catch(e){
+    $('i-msg').textContent='카메라 접근 실패.\nHTTPS 환경에서 열어주세요. (예: Netlify, GitHub Pages 등)';
+    console.error('Camera:',e);return;
+  }
+
+  $('i-msg').textContent='AI 포즈 감지 모델 다운로드 중...\n(최초 1회 약 10~30초, Wi-Fi 권장)';
+  try{
+    await tf.ready();
+    S.det=await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
+    );
+    if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
+    S.ready=true;
+    $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
+    $('btn-main').disabled=false;
+    $('init').classList.add('gone');
+    setTimeout(checkCameraHealth,400);
+  }catch(e){
+    console.error('Model:',e);
+    $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
+    $('i-msg').textContent='모델 로드 실패.\n인터넷 연결 확인 후 새로고침 해주세요.';
+  }
+  speechSynthesis.getVoices();
+}
+
+window.addEventListener('load',init);
+</script>
+</body>
+</html>

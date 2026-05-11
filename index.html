@@ -2,6 +2,8 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1280,11 +1282,11 @@ async function startRecording(){
       prOsc.connect(prGain);prGain.connect(_recAudioDest);
       prOsc.start(_recAudioCtx.currentTime);
       prOsc.stop(_recAudioCtx.currentTime+0.25);
-      // Mic with zero gain — activates pipeline without recording ambient sound
+      // Mic gain 1.0 — captures ambient audio including coaching voice from speaker
       if(S.audioStream){
         const micSrc=_recAudioCtx.createMediaStreamSource(S.audioStream);
         const micGain=_recAudioCtx.createGain();
-        micGain.gain.value=0;
+        micGain.gain.value=1.0;
         micSrc.connect(micGain);micGain.connect(_recAudioDest);
       }
       if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
@@ -1300,7 +1302,7 @@ async function startRecording(){
 
   const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
   const mime=mimePriority.find(m=>MediaRecorder.isTypeSupported(m))||'video/mp4';
-  try{S.recorder=new MediaRecorder(compStream,{mimeType:mime,videoBitsPerSecond:8000000,audioBitsPerSecond:128000});}
+  try{S.recorder=new MediaRecorder(compStream,{mimeType:mime,videoBitsPerSecond:12000000,audioBitsPerSecond:192000});}
   catch(e){try{S.recorder=new MediaRecorder(compStream,{videoBitsPerSecond:8000000});}
            catch(e2){S.recorder=new MediaRecorder(compStream);}}
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)S.recChunks.push(e.data);};
@@ -1311,11 +1313,11 @@ async function startRecording(){
 
   // Start draw loop immediately; delay recorder.start() 200ms so first recorded frame is clean live video
   // (eliminates 0~0.12s black/intro issue at start of saved video)
-  S.drawCompInterval=setInterval(drawComp,33);
+  S.drawCompInterval=setInterval(drawComp,16); // ~60fps
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
-      try{S.recorder.start(100);}catch(e){console.warn('Recorder start:',e);}
+      try{S.recorder.start(33);}catch(e){console.warn('Recorder start:',e);}
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
       S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
@@ -1755,7 +1757,11 @@ async function init(){
   }catch(e){
     console.error('Model:',e);
     $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
-    $('i-msg').textContent='모델 로드 실패.\n인터넷 연결 확인 후 새로고침 해주세요.';
+    $('init').classList.add('gone');
+    const rb=document.createElement('div');
+    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
+    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
+    document.body.appendChild(rb);
   }
   speechSynthesis.getVoices();
 }

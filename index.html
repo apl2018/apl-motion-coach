@@ -1305,16 +1305,12 @@ async function startRecording(){
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)S.recChunks.push(e.data);};
   S.recorder.onstop=saveRecording;
 
-  // Start draw loop first; delay MediaRecorder.start() 250ms to let AudioContext stream fully initialize on iOS
+  // Start draw loop and recorder together — intro is drawn from frame 1
   S.drawCompInterval=setInterval(drawComp,33);
-  setTimeout(()=>{
-    if(S.recorder&&S.recorder.state==='inactive'){
-      S.recorder.start(100); // 100ms timeslice = smooth playback
-      $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
-      S.recSec=0;updateRecTime();
-      S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
-    }
-  },250);
+  try{S.recorder.start(100);}catch(e){console.warn('Recorder start:',e);}
+  $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
+  S.recSec=0;updateRecTime();
+  S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
 }
 function updateRecTime(){
   const m=String(Math.floor(S.recSec/60)).padStart(2,'0');
@@ -1328,7 +1324,10 @@ function stopRecording(){
   if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}
   $('rec-dot').classList.remove('on');$('rec-time').classList.remove('on');
-  if(S.recorder&&S.recorder.state!=='inactive')S.recorder.stop();
+  if(S.recorder){
+    if(S.recorder.state==='recording'||S.recorder.state==='paused')S.recorder.stop();
+    else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording();
+  }
   if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;}
   // recorder.stop() → saveRecording 완료 후 AudioContext 닫기
   setTimeout(()=>{
@@ -1744,4 +1743,4 @@ async function init(){
 window.addEventListener('load',init);
 </script>
 </body>
-</html>
+</html>       

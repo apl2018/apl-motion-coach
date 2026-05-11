@@ -747,7 +747,15 @@ let _voices=[];
 window.speechSynthesis.onvoiceschanged=()=>{_voices=speechSynthesis.getVoices();};
 setTimeout(()=>{_voices=speechSynthesis.getVoices();},500);
 function speak(txt){
-  if(!window.speechSynthesis||S.speak) return;
+  if(!window.speechSynthesis) return;
+  // ① Chime + subtitle overlay always fire — independent of TTS lock
+  //    This ensures coaching is heard/seen even if TTS is stuck on iOS
+  playCoachChime();
+  if(_compDrawing) _coachOverlay={text:txt,until:Date.now()+3500};
+  $('fb-txt').textContent=txt;
+  setTimeout(()=>{if($('fb-txt').textContent===txt)$('fb-txt').textContent='';},4500);
+  // ② TTS voice — skip if already speaking to avoid overlap
+  if(S.speak) return;
   S.speak=true;
   speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(txt);
@@ -756,15 +764,9 @@ function speak(txt){
   const kv=_voices.find(v=>v.lang.startsWith(lc));
   if(kv) u.voice=kv;
   u.onend=u.onerror=()=>{S.speak=false;};
+  // Safety timeout: iOS often doesn't fire onend — release lock after estimated duration
+  setTimeout(()=>{S.speak=false;},Math.max(txt.length*110,3200));
   speechSynthesis.speak(u);
-  $('fb-txt').textContent=txt;
-  setTimeout(()=>{if($('fb-txt').textContent===txt)$('fb-txt').textContent='';},4500);
-  // Recording: inject chime + subtitle overlay so coaching is visible/audible
-  // in saved video regardless of BT headphone routing
-  if(_compDrawing){
-    playCoachChime();
-    _coachOverlay={text:txt,until:Date.now()+3500};
-  }
 }
 
 // ── DRAW ─────────────────────────────────────────────────────────────────────
@@ -1093,15 +1095,17 @@ let _recAudioCtx=null, _recAudioDest=null; // AudioContext for recording mix
 // Routes into _recAudioDest (captured by MediaRecorder) AND ctx.destination (heard live).
 // BT 연결 여부와 무관하게 차임음이 저장 영상에 녹음됩니다.
 function playCoachChime(){
-  const ctx=_recAudioCtx;
+  // Use recording context if active, otherwise fall back to keep-alive context (speaker only)
+  const ctx=(_recAudioCtx&&_recAudioCtx.state!=='closed')?_recAudioCtx:_audioCtxKeepAlive;
   if(!ctx||ctx.state==='closed') return;
   try{
     if(ctx.state==='suspended') ctx.resume().catch(()=>{});
     [[523.25,0],[659.25,0.14],[783.99,0.28]].forEach(([freq,delay])=>{
       const osc=ctx.createOscillator(),gain=ctx.createGain();
       osc.connect(gain);
-      if(_recAudioDest) gain.connect(_recAudioDest); // → 녹음 스트림에 직접 주입
-      gain.connect(ctx.destination);                  // → 스피커/이어폰으로도 들림
+      // Inject into recording stream only when using the recording context
+      if(ctx===_recAudioCtx&&_recAudioDest) gain.connect(_recAudioDest);
+      gain.connect(ctx.destination); // → 스피커/이어폰으로 들림
       osc.frequency.value=freq;osc.type='sine';
       const t=ctx.currentTime+delay;
       gain.gain.setValueAtTime(0,t);
@@ -1112,42 +1116,45 @@ function playCoachChime(){
   }catch(e){}
 }
 
-// Draw the APL logo intro card — 색상 반전: 검은 배경 + 흰색 별
+// Draw the APL logo intro card — 색상 반전 버전: 검은 배경 + 흰색 별
+// 원본 로고: 흰 배경 + 검은 별 + "PERFORMANCE LAB" 대각선(한 줄) + 검은 APL 사각형
+// 반전 버전: 검은 배경 + 흰 별 + 검은 텍스트(별 위) + 흰 APL 사각형
 function drawAPLIntro(ctx,w,h){
-  // ── 검은 배경 ─────────────────────────────────────────
+  // ── 검은 배경
   ctx.fillStyle='#000000';
   ctx.fillRect(0,0,w,h);
 
-  // ── 흰색 별 ───────────────────────────────────────────
-  const cx=w/2, cy=h*0.42;
-  const R=Math.min(w,h)*0.39, r=R*0.405;
+  const cx=w/2, cy=h*0.41;
+  const R=Math.min(w,h)*0.38, r=R*0.40;
+
+  // ── 흰색 5각 별 (원본과 동일한 비율)
   ctx.beginPath();
   for(let i=0;i<10;i++){
     const a=(i*Math.PI/5)-Math.PI/2;
     const radius=(i%2===0)?R:r;
-    const px=cx+radius*Math.cos(a), py=cy+radius*Math.sin(a);
-    i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+    i===0?ctx.moveTo(cx+radius*Math.cos(a),cy+radius*Math.sin(a))
+         :ctx.lineTo(cx+radius*Math.cos(a),cy+radius*Math.sin(a));
   }
   ctx.closePath();
   ctx.fillStyle='#FFFFFF';
   ctx.fill();
 
-  // ── "PERFORMANCE LAB" 대각선 텍스트 (별 위에, 검은색) ──
+  // ── "PERFORMANCE LAB" 한 줄 대각선 (원본 로고와 동일 배치)
+  // 별 중앙에서 오른쪽 아래로 기울어진 단일 텍스트
   ctx.save();
-  ctx.translate(cx+R*0.18, cy+R*0.13);
-  ctx.rotate(-0.60);
-  const tf=Math.round(R*0.135);
+  ctx.translate(cx+R*0.06, cy+R*0.22);
+  ctx.rotate(-0.72); // 약 -41° — 원본 로고의 대각선 각도
+  const tf=Math.round(R*0.148);
   ctx.font=`900 ${tf}px "Arial Black",Arial,sans-serif`;
   ctx.fillStyle='#000000';
   ctx.textAlign='center';
   ctx.textBaseline='middle';
-  ctx.fillText('PERFORMANCE', 0, -tf*0.62);
-  ctx.fillText('LAB', 0, tf*0.70);
+  ctx.fillText('PERFORMANCE LAB', 0, 0);
   ctx.restore();
 
-  // ── A P L 흰색 사각형 + 검은 글자 ─────────────────────
+  // ── A P L 흰색 사각형 + 검은 글자 (원본은 검은 사각형 + 흰 글자 → 반전)
   const sqSz=Math.round(w*0.215);
-  const gap=Math.round(w*0.008);
+  const gap=Math.round(w*0.010);
   const totalW=sqSz*3+gap*2;
   const sqX=(w-totalW)/2;
   const sqY=Math.round(h*0.795);
@@ -1155,11 +1162,11 @@ function drawAPLIntro(ctx,w,h){
     const sx=sqX+i*(sqSz+gap);
     ctx.fillStyle='#FFFFFF';
     ctx.fillRect(sx,sqY,sqSz,sqSz);
-    ctx.font=`900 ${Math.round(sqSz*0.68)}px "Arial Black",Arial,sans-serif`;
+    ctx.font=`900 ${Math.round(sqSz*0.70)}px "Arial Black",Arial,sans-serif`;
     ctx.fillStyle='#000000';
     ctx.textAlign='center';
     ctx.textBaseline='middle';
-    ctx.fillText(ltr,sx+sqSz/2,sqY+sqSz*0.54);
+    ctx.fillText(ltr,sx+sqSz/2,sqY+sqSz*0.55);
   });
 }
 
@@ -1729,18 +1736,10 @@ async function init(){
     if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
     S.ready=true;
     $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
-    $('btn-main').disabled=false;
-    $('init').classList.add('gone');
-    setTimeout(checkCameraHealth,400);
-  }catch(e){
-    console.error('Model:',e);
-    $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
-    $('i-msg').textContent='\uBAA8\uB378 \uB85C\uB4DC \uC2E4\uD328.\n\uC778\uD130\uB137 \uC5F0\uACB0 \uD655\uC778 \uD6C4 \uC0C8\uB85C\uACE0\uCE68 \uD574\uC8FC\uC138\uC694.';
-  }
-  speechSynthesis.getVoices();
+      speechSynthesis.getVoices();
 }
 
 window.addEventListener('load',init);
 </script>
 </body>
-</html>       
+</html>

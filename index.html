@@ -1087,6 +1087,7 @@ let _compDrawing=false;
 let _lastKps=null,_lastCmp=null;
 let _coachOverlay=null; // {text, until}
 let _introUntil=0;     // epoch ms — show APL logo intro until this time
+let _recAudioCtx=null, _recAudioDest=null; // AudioContext for recording mix
 
 // Play a 3-note ascending chime.
 // Routes into _recAudioDest (captured by MediaRecorder) AND ctx.destination (heard live).
@@ -1104,7 +1105,7 @@ function playCoachChime(){
       osc.frequency.value=freq;osc.type='sine';
       const t=ctx.currentTime+delay;
       gain.gain.setValueAtTime(0,t);
-      gain.gain.linearRampToValueAtTime(0.30,t+0.05);
+      gain.gain.linearRampToValueAtTime(0.50,t+0.05);
       gain.gain.exponentialRampToValueAtTime(0.001,t+0.42);
       osc.start(t);osc.stop(t+0.43);
     });
@@ -1230,29 +1231,28 @@ async function startRecording(){
         const txt=_coachOverlay.text;
         const fh=Math.max(16,Math.round(ch*0.034));
         const pad=Math.round(ch*0.013);
-        const barH=fh+pad*2;
+        const maxW=cw-32;
+        compCtx.font=`600 ${fh}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+        // Determine lines first so bar height is correct
+        const half=Math.ceil(txt.length/2);
+        const lines=compCtx.measureText(txt).width>maxW?[txt.slice(0,half),txt.slice(half)]:[txt];
+        const barH=fh*lines.length+pad*(lines.length+1);
         const barY=ch-barH-Math.round(ch*0.018);
         compCtx.save();
-        // Semi-transparent bar
+        // Semi-transparent bar (sized for actual number of lines)
         compCtx.fillStyle='rgba(0,0,0,0.72)';
         compCtx.fillRect(0,barY,cw,barH);
         // APL red left accent
         compCtx.fillStyle='#E53935';
         compCtx.fillRect(0,barY,5,barH);
-        // Text
+        // Text lines — each line properly spaced
         compCtx.font=`600 ${fh}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
         compCtx.fillStyle='#FFFFFF';
         compCtx.textAlign='center';
         compCtx.textBaseline='middle';
-        const maxW=cw-32;
-        // Simple line-break if text is too wide
-        if(compCtx.measureText(txt).width>maxW){
-          const half=Math.ceil(txt.length/2);
-          compCtx.fillText(txt.slice(0,half),cw/2,barY+barH*0.3);
-          compCtx.fillText(txt.slice(half),cw/2,barY+barH*0.72);
-        }else{
-          compCtx.fillText(txt,cw/2,barY+barH/2);
-        }
+        lines.forEach((line,i)=>{
+          compCtx.fillText(line,cw/2,barY+pad*(i+1)+fh*(i+0.5));
+        });
         compCtx.restore();
       }catch(e){}
     }
@@ -1265,15 +1265,23 @@ async function startRecording(){
   }
 
   // Audio: AudioContext 믹싱 방식
-  // 마이크를 AudioContext에 연결(gain=0) → iOS에서 destination 스트림을 활성화시키는 트릭
-  // 차임음은 _recAudioDest에 직접 주입 → BT 연결 여부와 무관하게 녹음에 포함
+  // 차임음을 _recAudioDest에 직접 주입 → BT 연결 여부와 무관하게 녹음에 포함
+  // iOS 워크어라운드: priming 오실레이터로 MediaStreamDestination 스트림을 미리 활성화
   try{
     _recAudioCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:44100});
     _recAudioDest=_recAudioCtx.createMediaStreamDestination();
+    // Priming: play a brief near-silent tone so iOS initializes the audio pipeline
+    const prOsc=_recAudioCtx.createOscillator();
+    const prGain=_recAudioCtx.createGain();
+    prGain.gain.value=0.0001;
+    prOsc.connect(prGain);prGain.connect(_recAudioDest);
+    prOsc.start(_recAudioCtx.currentTime);
+    prOsc.stop(_recAudioCtx.currentTime+0.25);
+    // Mic connected with zero gain — activates stream pipeline without capturing ambient sound
     if(S.audioStream){
       const micSrc=_recAudioCtx.createMediaStreamSource(S.audioStream);
       const micGain=_recAudioCtx.createGain();
-      micGain.gain.value=0.0001; // 거의 무음이지만 스트림을 iOS에서 활성화하기 위해 필요
+      micGain.gain.value=0;
       micSrc.connect(micGain);micGain.connect(_recAudioDest);
     }
     if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
@@ -1286,8 +1294,8 @@ async function startRecording(){
     }
   }
 
-  // APL 로고 인트로 0.5초
-  _introUntil=Date.now()+500;
+  // APL 로고 인트로 0.1초
+  _introUntil=Date.now()+100;
 
   const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
   const mime=mimePriority.find(m=>MediaRecorder.isTypeSupported(m))||'video/mp4';
@@ -1297,12 +1305,16 @@ async function startRecording(){
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)S.recChunks.push(e.data);};
   S.recorder.onstop=saveRecording;
 
-  // Start draw loop (setInterval 33ms ≈ 30fps), then start recording
+  // Start draw loop first; delay MediaRecorder.start() 250ms to let AudioContext stream fully initialize on iOS
   S.drawCompInterval=setInterval(drawComp,33);
-  S.recorder.start(100); // 100ms timeslice = smooth playback, no large chunk gaps
-  $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
-  S.recSec=0;updateRecTime();
-  S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
+  setTimeout(()=>{
+    if(S.recorder&&S.recorder.state==='inactive'){
+      S.recorder.start(100); // 100ms timeslice = smooth playback
+      $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
+      S.recSec=0;updateRecTime();
+      S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
+    }
+  },250);
 }
 function updateRecTime(){
   const m=String(Math.floor(S.recSec/60)).padStart(2,'0');
@@ -1456,7 +1468,6 @@ async function startLive(){
   $('abar').classList.add('on');$('rep-badge').classList.add('on');$('zone-badge').classList.add('on');
   if(!S.refs[S.ex.id])$('no-ref').classList.add('on');
   startRecording(); // audioStream already set, so skips getUserMedia inside
-  setTimeout(()=>speak((S.ex[CL]||S.ex.ko)+TX[CL].voice_start),200);
   loop();
 }
 function stopLive(){

@@ -166,6 +166,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
   cursor:pointer;white-space:nowrap;transition:all .15s;display:none}
 #btn-ref-stop.on{display:block}
 #btn-ref-stop:active{opacity:.6}
+#btn-ref-file{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--txt2);font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
+#btn-ref-file:active{opacity:.6}
+#src-row{display:flex;gap:8px;padding:0 16px 8px;box-sizing:border-box;width:100%;max-width:480px;margin:0 auto}
+.srctgl{flex:1;padding:9px 6px;border-radius:10px;border:1px solid var(--border);color:var(--txt2);text-align:center;cursor:pointer;font-size:13px;font-weight:600;transition:all .2s;user-select:none;-webkit-user-select:none}
+.srctgl.on{background:var(--red);color:#fff;border-color:transparent}
+.srctgl:active{opacity:.7}
+#ana-file-label{text-align:center;font-size:11px;color:var(--txt2);padding:0 16px 4px;min-height:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #fb-txt{text-align:center;font-size:13px;color:var(--txt2);min-height:18px;transition:opacity .3s}
 
 /* SUMMARY MODAL */
@@ -371,15 +378,23 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
       <div class="ref-btns">
         <button id="btn-ref-start">● 기준 시작</button>
         <button id="btn-ref-stop">■ 기준 종료</button>
+        <button id="btn-ref-file">📁 파일</button>
       </div>
     </div>
     <div id="fb-txt"></div>
   </div>
 
   <div id="btn-wrap">
+    <div id="src-row">
+      <div class="srctgl on" id="src-cam-btn">📷 카메라</div>
+      <div class="srctgl" id="src-file-btn">📁 영상 파일</div>
+    </div>
+    <div id="ana-file-label"></div>
     <button id="btn-main" class="start" disabled>▶  분석 시작</button>
   </div>
 </div><!-- #app -->
+<input type="file" id="ref-file-input" accept="video/*" style="display:none">
+<input type="file" id="ana-file-input" accept="video/*" style="display:none">
 
 <!-- Frame Picker Modal -->
 <div id="fp-modal">
@@ -894,7 +909,10 @@ async function loop(){
       }
     }catch(e){console.warn(e);}
   }
-  if(S.live) S.raf=requestAnimationFrame(loop);
+  if(S.live){
+    if(_srcMode==='file'&&(vid.ended||vid.paused&&vid.currentTime>=vid.duration-0.1)){stopLive();return;}
+    S.raf=requestAnimationFrame(loop);
+  }
 }
 
 // ── REFERENCE RECORDING ──────────────────────────────────────────────────────
@@ -935,8 +953,14 @@ function showFramePicker(){
   const blob=new Blob(_refChunks,{type:saveMime});
   if(_fpBlobURL)URL.revokeObjectURL(_fpBlobURL);
   _fpBlobURL=URL.createObjectURL(blob);
+  _setupFramePicker(_fpBlobURL);
+}
+function showFramePickerFromURL(url){
+  _setupFramePicker(url);
+}
+function _setupFramePicker(url){
   const fpv=$('fp-vid');
-  fpv.src=_fpBlobURL;fpv.load();
+  fpv.src=url;fpv.load();
   const L=TX[CL];
   $('fp-title').textContent=L.fp_title;
   $('fp-time-info').textContent=L.fp_info;
@@ -1096,6 +1120,8 @@ let _introUntil=0;     // epoch ms — show APL logo intro until this time
 let _recAudioCtx=null, _recAudioDest=null; // AudioContext for recording mix
 let _recStartTimer=null; // setTimeout handle for delayed recorder.start()
 let _drawRafId=null;    // requestAnimationFrame handle for composite draw loop
+let _srcMode='camera'; // 'camera' | 'file' — analysis source mode
+let _anaFileURL=null;  // blob URL for uploaded analysis video
 
 // Play a 3-note ascending chime.
 // Routes into _recAudioDest (captured by MediaRecorder) AND ctx.destination (heard live).
@@ -1214,7 +1240,7 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
 }
 
 async function startRecording(){
-  if(!S.stream) return;
+  if(!S.stream&&_srcMode==='camera') return;
   S.recChunks=[];
   // Composite canvas matches exact video resolution — no scaling issues
   const cw=vid.videoWidth||$('cam-wrap').offsetWidth||720;
@@ -1468,6 +1494,60 @@ function fixIOSAudioRouting(){
   }catch(e){console.warn('AudioCtx routing fix:',e);}
 }
 
+// ── SOURCE MODE (Camera vs File Upload) ──────────────────────────────────────
+function switchSrcMode(mode){
+  if(S.live||S.caps) return;
+  _srcMode=mode;
+  $('src-cam-btn').classList.toggle('on',mode==='camera');
+  $('src-file-btn').classList.toggle('on',mode==='file');
+  if(mode==='camera'){
+    if(_anaFileURL){URL.revokeObjectURL(_anaFileURL);_anaFileURL=null;}
+    $('ana-file-label').textContent='';
+    vid.pause();vid.src='';
+    vid.srcObject=S.stream;
+    if(S.stream) vid.play().catch(()=>{});
+    resizeCam();
+    $('btn-main').disabled=!S.ready;
+  }else{
+    $('ana-file-input').click();
+  }
+}
+function openRefFileUpload(){
+  $('ref-file-input').click();
+}
+function onRefFileSelected(e){
+  const file=e.target.files[0];
+  e.target.value='';
+  if(!file) return;
+  if(_fpBlobURL) URL.revokeObjectURL(_fpBlobURL);
+  _fpBlobURL=URL.createObjectURL(file);
+  _refChunks=[];
+  showFramePickerFromURL(_fpBlobURL);
+}
+function onAnaFileSelected(e){
+  const file=e.target.files[0];
+  e.target.value='';
+  if(!file){
+    // User cancelled — revert to camera mode
+    _srcMode='camera';
+    $('src-cam-btn').classList.add('on');
+    $('src-file-btn').classList.remove('on');
+    return;
+  }
+  if(_anaFileURL) URL.revokeObjectURL(_anaFileURL);
+  _anaFileURL=URL.createObjectURL(file);
+  vid.pause();
+  vid.srcObject=null;
+  vid.src=_anaFileURL;
+  vid.loop=false;
+  vid.muted=true;
+  vid.load();
+  const short=file.name.length>30?file.name.slice(0,27)+'...':file.name;
+  $('ana-file-label').textContent='📁 '+short;
+  vid.addEventListener('loadedmetadata',()=>{resizeCam()},{once:true});
+  $('btn-main').disabled=!S.ready;
+}
+
 // ── ANALYSIS START / STOP ────────────────────────────────────────────────────
 async function startLive(){
   if(!S.ready) return;
@@ -1495,14 +1575,22 @@ async function startLive(){
     }catch(e){console.warn('Mic permission denied:',e);}
   }
 
-  // ③ Now start 5s countdown
+  // ③ Countdown (camera mode) or play file (file mode)
   const cdown=$('cdown'),cnum=$('cnum');
-  cdown.classList.add('on');
-  for(let i=5;i>=1;i--){
-    cnum.textContent=i;cnum.style.color=i<=2?'#E53935':'#fff';
-    await sleep(1000);
+  if(_srcMode==='file'&&_anaFileURL){
+    cdown.classList.add('on');
+    cnum.textContent='▶';cnum.style.color='#4CAF50';
+    await sleep(700);
+    cdown.classList.remove('on');cnum.style.color='#fff';
+    try{vid.currentTime=0;await vid.play();}catch(e){console.warn('vid.play file:',e);}
+  }else{
+    cdown.classList.add('on');
+    for(let i=5;i>=1;i--){
+      cnum.textContent=i;cnum.style.color=i<=2?'#E53935':'#fff';
+      await sleep(1000);
+    }
+    cdown.classList.remove('on');cnum.style.color='#fff';
   }
-  cdown.classList.remove('on');cnum.style.color='#fff';
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
   resetRepOsc();
   $('rep-num').textContent='0';
@@ -1517,6 +1605,7 @@ async function startLive(){
 function stopLive(){
   S.live=false;
   if(S.raf){cancelAnimationFrame(S.raf);S.raf=null;}
+  if(_srcMode==='file') vid.pause();
   $('btn-main').className='start';$('btn-main').textContent=TX[CL].btn_start;
   $('abar').classList.remove('on');$('chip').className='';
   $('no-det').classList.remove('on');$('no-ref').classList.remove('on');
@@ -1524,6 +1613,14 @@ function stopLive(){
   $('fb-txt').textContent='';
   ctx.clearRect(0,0,cvs.width,cvs.height);
   stopRecording();
+  // File mode: restore camera feed after recording finishes saving
+  if(_srcMode==='file'&&S.stream){
+    setTimeout(()=>{
+      vid.src='';vid.srcObject=S.stream;
+      vid.play().catch(()=>{});
+      resizeCam();
+    },900);
+  }
   const elapsed=Math.floor((Date.now()-S.startTime)/1000);
   speak(TX[CL].voice_stop);
   setTimeout(()=>showSummary(elapsed),600);
@@ -1699,6 +1796,11 @@ async function init(){
     });
   });
   $('btn-ref-start').addEventListener('click',startRefRecording);
+  $('btn-ref-file').addEventListener('click',openRefFileUpload);
+  $('ref-file-input').addEventListener('change',onRefFileSelected);
+  $('ana-file-input').addEventListener('change',onAnaFileSelected);
+  $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));
+  $('src-file-btn').addEventListener('click',()=>switchSrcMode('file'));
   $('btn-ref-stop').addEventListener('click',stopRefRecording);
   $('fp-close').addEventListener('click',closeFramePicker);
   $('fp-save').addEventListener('click',saveRefFrame);

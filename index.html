@@ -1088,35 +1088,37 @@ let _lastKps=null,_lastCmp=null;
 let _coachOverlay=null; // {text, until}
 let _introUntil=0;     // epoch ms — show APL logo intro until this time
 
-// Play a 3-note ascending chime through the device speaker via _audioCtxKeepAlive.
-// Without BT the phone mic picks it up → audible in the saved recording.
-// With BT the chime goes to earphones; the text overlay still marks coaching visually.
+// Play a 3-note ascending chime.
+// Routes into _recAudioDest (captured by MediaRecorder) AND ctx.destination (heard live).
+// BT 연결 여부와 무관하게 차임음이 저장 영상에 녹음됩니다.
 function playCoachChime(){
-  const ctx=_audioCtxKeepAlive;
+  const ctx=_recAudioCtx;
   if(!ctx||ctx.state==='closed') return;
   try{
     if(ctx.state==='suspended') ctx.resume().catch(()=>{});
     [[523.25,0],[659.25,0.14],[783.99,0.28]].forEach(([freq,delay])=>{
       const osc=ctx.createOscillator(),gain=ctx.createGain();
-      osc.connect(gain);gain.connect(ctx.destination);
+      osc.connect(gain);
+      if(_recAudioDest) gain.connect(_recAudioDest); // → 녹음 스트림에 직접 주입
+      gain.connect(ctx.destination);                  // → 스피커/이어폰으로도 들림
       osc.frequency.value=freq;osc.type='sine';
       const t=ctx.currentTime+delay;
       gain.gain.setValueAtTime(0,t);
-      gain.gain.linearRampToValueAtTime(0.22,t+0.05);
+      gain.gain.linearRampToValueAtTime(0.30,t+0.05);
       gain.gain.exponentialRampToValueAtTime(0.001,t+0.42);
       osc.start(t);osc.stop(t+0.43);
     });
   }catch(e){}
 }
 
-// Draw the APL logo intro card on any canvas context
+// Draw the APL logo intro card — 색상 반전: 검은 배경 + 흰색 별
 function drawAPLIntro(ctx,w,h){
-  // White background
-  ctx.fillStyle='#FFFFFF';
+  // ── 검은 배경 ─────────────────────────────────────────
+  ctx.fillStyle='#000000';
   ctx.fillRect(0,0,w,h);
 
-  // ── Star ──────────────────────────────────────────────
-  const cx=w/2, cy=h*0.39;
+  // ── 흰색 별 ───────────────────────────────────────────
+  const cx=w/2, cy=h*0.42;
   const R=Math.min(w,h)*0.39, r=R*0.405;
   ctx.beginPath();
   for(let i=0;i<10;i++){
@@ -1126,46 +1128,38 @@ function drawAPLIntro(ctx,w,h){
     i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
   }
   ctx.closePath();
-  ctx.fillStyle='#000000';
+  ctx.fillStyle='#FFFFFF';
   ctx.fill();
 
-  // ── "PERFORMANCE LAB" diagonal text on star ───────────
+  // ── "PERFORMANCE LAB" 대각선 텍스트 (별 위에, 검은색) ──
   ctx.save();
   ctx.translate(cx+R*0.18, cy+R*0.13);
-  ctx.rotate(-0.60); // ~-34°
+  ctx.rotate(-0.60);
   const tf=Math.round(R*0.135);
   ctx.font=`900 ${tf}px "Arial Black",Arial,sans-serif`;
-  ctx.fillStyle='#FFFFFF';
+  ctx.fillStyle='#000000';
   ctx.textAlign='center';
   ctx.textBaseline='middle';
   ctx.fillText('PERFORMANCE', 0, -tf*0.62);
   ctx.fillText('LAB', 0, tf*0.70);
   ctx.restore();
 
-  // ── A P L squares ──────────────────────────────────────
+  // ── A P L 흰색 사각형 + 검은 글자 ─────────────────────
   const sqSz=Math.round(w*0.215);
   const gap=Math.round(w*0.008);
   const totalW=sqSz*3+gap*2;
   const sqX=(w-totalW)/2;
-  const sqY=Math.round(h*0.775);
+  const sqY=Math.round(h*0.795);
   ['A','P','L'].forEach((ltr,i)=>{
     const sx=sqX+i*(sqSz+gap);
-    ctx.fillStyle='#000000';
+    ctx.fillStyle='#FFFFFF';
     ctx.fillRect(sx,sqY,sqSz,sqSz);
     ctx.font=`900 ${Math.round(sqSz*0.68)}px "Arial Black",Arial,sans-serif`;
-    ctx.fillStyle='#FFFFFF';
+    ctx.fillStyle='#000000';
     ctx.textAlign='center';
     ctx.textBaseline='middle';
     ctx.fillText(ltr,sx+sqSz/2,sqY+sqSz*0.54);
   });
-
-  // ── subtitle ──────────────────────────────────────────
-  const sf=Math.round(h*0.020);
-  ctx.font=`500 ${sf}px -apple-system,sans-serif`;
-  ctx.fillStyle='#777777';
-  ctx.textAlign='center';
-  ctx.textBaseline='top';
-  ctx.fillText('Motion Coach',w/2,sqY+sqSz+Math.round(h*0.022));
 }
 
 // Draw skeleton directly on any canvas using video-space coordinates
@@ -1270,15 +1264,30 @@ async function startRecording(){
     compStream=new MediaStream(S.stream.getVideoTracks().map(t=>t.clone()));
   }
 
-  // Audio: mic stream → reliable on all iOS/Android browsers.
-  // Coaching chimes play through the device speaker via _audioCtxKeepAlive so the
-  // mic picks them up (works without BT). Text subtitle overlay covers the BT case.
-  if(S.audioStream){
-    S.audioStream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t.clone());}catch(e){}});
+  // Audio: AudioContext 믹싱 방식
+  // 마이크를 AudioContext에 연결(gain=0) → iOS에서 destination 스트림을 활성화시키는 트릭
+  // 차임음은 _recAudioDest에 직접 주입 → BT 연결 여부와 무관하게 녹음에 포함
+  try{
+    _recAudioCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:44100});
+    _recAudioDest=_recAudioCtx.createMediaStreamDestination();
+    if(S.audioStream){
+      const micSrc=_recAudioCtx.createMediaStreamSource(S.audioStream);
+      const micGain=_recAudioCtx.createGain();
+      micGain.gain.value=0.0001; // 거의 무음이지만 스트림을 iOS에서 활성화하기 위해 필요
+      micSrc.connect(micGain);micGain.connect(_recAudioDest);
+    }
+    if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
+    _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
+  }catch(e){
+    console.warn('RecAudioCtx 실패, mic 폴백:',e);
+    _recAudioCtx=null;_recAudioDest=null;
+    if(S.audioStream){
+      S.audioStream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t.clone());}catch(e2){}});
+    }
   }
 
-  // Show APL logo intro for first 2.5 s of the saved video
-  _introUntil=Date.now()+2500;
+  // APL 로고 인트로 0.5초
+  _introUntil=Date.now()+500;
 
   const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
   const mime=mimePriority.find(m=>MediaRecorder.isTypeSupported(m))||'video/mp4';
@@ -1309,6 +1318,10 @@ function stopRecording(){
   $('rec-dot').classList.remove('on');$('rec-time').classList.remove('on');
   if(S.recorder&&S.recorder.state!=='inactive')S.recorder.stop();
   if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;}
+  // recorder.stop() → saveRecording 완료 후 AudioContext 닫기
+  setTimeout(()=>{
+    if(_recAudioCtx){_recAudioCtx.close().catch(()=>{});_recAudioCtx=null;_recAudioDest=null;}
+  },800);
 }
 function saveRecording(){
   if(!S.recChunks.length) return;
@@ -1712,7 +1725,7 @@ async function init(){
   }catch(e){
     console.error('Model:',e);
     $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
-    $('i-msg').textContent='모델 로드 실패.\n인터넷 연결 확인 후 새로고침 해주세요.';
+    $('i-msg').textContent='\uBAA8\uB378 \uB85C\uB4DC \uC2E4\uD328.\n\uC778\uD130\uB137 \uC5F0\uACB0 \uD655\uC778 \uD6C4 \uC0C8\uB85C\uACE0\uCE68 \uD574\uC8FC\uC138\uC694.';
   }
   speechSynthesis.getVoices();
 }

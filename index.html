@@ -752,7 +752,7 @@ function speak(txt){
   if(!window.speechSynthesis) return;
   // ① Chime + subtitle overlay always fire — independent of TTS lock
   //    This ensures coaching is heard/seen even if TTS is stuck on iOS
-  playCoachChime();
+  // (chime removed per user request)
   if(_compDrawing) _coachOverlay={text:txt,until:Date.now()+3500};
   $('fb-txt').textContent=txt;
   setTimeout(()=>{if($('fb-txt').textContent===txt)$('fb-txt').textContent='';},4500);
@@ -843,7 +843,7 @@ function doFeedback(cmp,inZone){
 }
 // ── DETECTION LOOP ───────────────────────────────────────────────────────────
 let _lastDet=0;
-const DET_MS=280;
+const DET_MS=80; // fast detection for smooth skeleton
 async function loop(){
   if(!S.live) return;
   const now=Date.now();
@@ -858,7 +858,8 @@ async function loop(){
       }else{
         $('no-det').classList.remove('on');
         const kps=poses[0].keypoints;
-        _lastKps=kps;
+        _prevKps=_lastKps;_prevKpsTs=_kpsTs;
+        _lastKps=kps;_kpsTs=Date.now();
         const angles=extractAngles(kps);
         const ref=S.refs[S.ex.id]||null;
         const cmp=ref?compare(angles,ref,S.ex):null;
@@ -1089,10 +1090,12 @@ function resetRepOsc(){
 // ── RECORDING ─────────────────────────────────────────────────────────────────
 let _compDrawing=false;
 let _lastKps=null,_lastCmp=null;
+let _prevKps=null,_kpsTs=0,_prevKpsTs=0; // for skeleton interpolation
 let _coachOverlay=null; // {text, until}
 let _introUntil=0;     // epoch ms — show APL logo intro until this time
 let _recAudioCtx=null, _recAudioDest=null; // AudioContext for recording mix
 let _recStartTimer=null; // setTimeout handle for delayed recorder.start()
+let _drawRafId=null;    // requestAnimationFrame handle for composite draw loop
 
 // Play a 3-note ascending chime.
 // Routes into _recAudioDest (captured by MediaRecorder) AND ctx.destination (heard live).
@@ -1224,13 +1227,27 @@ async function startRecording(){
   // Draw composite at 30fps using setInterval (more consistent than RAF under TF.js load)
   _compDrawing=true;
   function drawComp(){
-    if(!_compDrawing) return;
+    if(!_compDrawing){_drawRafId=null;return;}
+    _drawRafId=requestAnimationFrame(drawComp);
     compCtx.clearRect(0,0,cw,ch);
     // ── APL intro logo (first 2.5 s of recording) ──────────────────────────
     // Draw raw video at exact video resolution (sc=1, no offset)
     try{compCtx.drawImage(vid,0,0,cw,ch);}catch(e){}
     // Draw skeleton directly from last known keypoints at video coordinates
-    try{drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
+    // Interpolate skeleton between detection frames for smooth motion
+    try{
+      let kpsDraw=_lastKps;
+      if(_prevKps&&_lastKps&&_kpsTs>_prevKpsTs){
+        const elapsed=Date.now()-_kpsTs;
+        const dur=Math.max(_kpsTs-_prevKpsTs,DET_MS);
+        const a=Math.min(elapsed/dur,1);
+        kpsDraw=_lastKps.map((kp,i)=>{
+          const p=_prevKps[i];
+          return{...kp,x:p.x+(kp.x-p.x)*a,y:p.y+(kp.y-p.y)*a};
+        });
+      }
+      drawFrameComp(compCtx,cw,ch,kpsDraw,_lastCmp);
+    }catch(e){}
     // Draw coaching subtitle overlay — visible in saved recording
     if(_coachOverlay&&Date.now()<_coachOverlay.until){
       try{
@@ -1265,7 +1282,7 @@ async function startRecording(){
   }
 
   let compStream;
-  try{compStream=comp.captureStream?comp.captureStream(30):comp.mozCaptureStream(30);}
+  try{compStream=comp.captureStream?comp.captureStream(60):comp.mozCaptureStream(60);}
   catch(e){
     compStream=new MediaStream(S.stream.getVideoTracks().map(t=>t.clone()));
   }
@@ -1313,7 +1330,10 @@ async function startRecording(){
 
   // Start draw loop immediately; delay recorder.start() 200ms so first recorded frame is clean live video
   // (eliminates 0~0.12s black/intro issue at start of saved video)
-  S.drawCompInterval=setInterval(drawComp,16); // ~60fps
+  // Use RAF for display-sync drawing (replaces setInterval)
+  _compDrawing=true; // already set above but ensure it's true
+  S.drawCompInterval=1; // placeholder (actual RAF managed via _drawRafId)
+  _drawRafId=requestAnimationFrame(drawComp);
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
@@ -1334,7 +1354,9 @@ function stopRecording(){
   _coachOverlay=null;
   _introUntil=0;
   if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;} // cancel delayed start if still pending
-  if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
+  if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
+  if(S.drawCompInterval&&S.drawCompInterval!==1){clearInterval(S.drawCompInterval);}
+  S.drawCompInterval=null;
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}
   $('rec-dot').classList.remove('on');$('rec-time').classList.remove('on');
   if(S.recorder){

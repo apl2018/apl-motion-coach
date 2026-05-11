@@ -792,7 +792,8 @@ function speak(txt){
 // ── DRAW ─────────────────────────────────────────────────────────────────────
 function coverXY(kp){
   const cw=cvs.width,ch=cvs.height,vw=vid.videoWidth||1,vh=vid.videoHeight||1;
-  const sc=Math.max(cw/vw,ch/vh);
+  // 파일 모드: contain(레터박스), 카메라 모드: cover
+  const sc=_srcMode==='file'?Math.min(cw/vw,ch/vh):Math.max(cw/vw,ch/vh);
   return{x:kp.x*sc+(cw-vw*sc)/2,y:kp.y*sc+(ch-vh*sc)/2};
 }
 const ST_COL={good:'#4CAF50',warn:'#FFC107',crit:'#F44336',unk:'#2196F3'};
@@ -1507,6 +1508,7 @@ function switchSrcMode(mode){
     if(_anaFileURL){URL.revokeObjectURL(_anaFileURL);_anaFileURL=null;}
     $('ana-file-label').textContent='';
     vid.pause();vid.src='';
+    vid.style.objectFit='cover'; // 카메라 모드 복원
     vid.srcObject=S.stream;
     if(S.stream){
       vid.play().catch(()=>{});
@@ -1546,6 +1548,7 @@ function onAnaFileSelected(e){
   vid.src=_anaFileURL;
   vid.loop=false;
   vid.muted=true;
+  vid.style.objectFit='contain'; // 원본 비율 유지
   vid.load();
   const short=file.name.length>30?file.name.slice(0,27)+'...':file.name;
   $('ana-file-label').textContent='📁 '+short;
@@ -1625,14 +1628,16 @@ function stopLive(){
   $('fb-txt').textContent='';
   ctx.clearRect(0,0,cvs.width,cvs.height);
   stopRecording();
-  // File mode: restore camera feed after recording finishes saving
-  if(_srcMode==='file'&&S.stream){
+  // File mode: restore camera after recording saves
+  // restartCamera() guarantees fresh stream (S.stream may be stale after file analysis)
+  if(_srcMode==='file'){
     setTimeout(()=>{
+      vid.pause();
       vid.src='';
-      vid.srcObject=S.stream;
-      vid.play().catch(()=>{});
-      vid.addEventListener('loadeddata',resizeCam,{once:true});
-    },900);
+      vid.srcObject=null;
+      vid.style.objectFit='cover'; // 카메라 모드로 복원
+      restartCamera();
+    },1000);
   }
   const elapsed=Math.floor((Date.now()-S.startTime)/1000);
   speak(TX[CL].voice_stop);
@@ -1727,10 +1732,14 @@ function resizeCam(){
   const vw=vid.videoWidth,vh=vid.videoHeight;
   if(!vw||!vh) return;
   const dw=$('cam-wrap').offsetWidth;
-  const dh=Math.min(dw*(vh/vw),window.innerHeight*0.60);
+  // 파일 모드: 원본 비율 최대 표시 (80%), 카메라 모드: 60%
+  const maxH=_srcMode==='file'?window.innerHeight*0.80:window.innerHeight*0.60;
+  const dh=Math.min(dw*(vh/vw),maxH);
   $('cam-wrap').style.height=dh+'px';
   cvs.width=dw;cvs.height=dh;
   cvs.style.width=dw+'px';cvs.style.height=dh+'px';
+  // 파일 모드: contain (원본 비율 유지, 레터박스), 카메라: cover
+  vid.style.objectFit=_srcMode==='file'?'contain':'cover';
 }
 function checkCameraHealth(){
   if(S.live||S.caps||_camBusy||_srcMode==='file') return;
@@ -1848,8 +1857,11 @@ async function init(){
   $('btn-flip-hdr').addEventListener('click',switchCamera);
   $('btn-sum-close').addEventListener('click',()=>{
     $('summary').classList.remove('on');
-    // Camera may have been paused/stopped during recording — check and recover
-    setTimeout(checkCameraHealth, 300);
+    // Camera recovery: checkCameraHealth for camera mode, restartCamera if still black in file mode
+    setTimeout(()=>{
+      if(_srcMode==='camera') checkCameraHealth();
+      else if(vid.readyState<2||vid.videoWidth===0) restartCamera();
+    },300);
   });
 
   $('i-msg').textContent='카메라 시작 중...';
@@ -1863,7 +1875,11 @@ async function init(){
     vid.addEventListener('loadeddata',resizeCam);
     // Auto-recover camera when app returns to foreground (e.g. after sharing video)
     document.addEventListener('visibilitychange',()=>{
-      if(document.visibilityState==='visible') setTimeout(checkCameraHealth,400);
+      if(document.visibilityState==='visible'){
+        // 카메라 모드: 건강 체크 / 파일 모드이고 분석 중 아니면 카메라가 블랙인지 확인
+        if(_srcMode==='camera') setTimeout(checkCameraHealth,400);
+        else if(!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
+      }
     });
     vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera') checkCameraHealth();});
     vid.addEventListener('ended',()=>{if(_srcMode==='camera') checkCameraHealth();});

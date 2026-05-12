@@ -168,6 +168,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #btn-ref-stop.on{display:block}
 #btn-ref-stop:active{opacity:.6}
 #btn-ref-file{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--txt2);font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
+#btn-ref-export{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(76,175,80,.5);color:#4CAF50;font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
 #btn-ref-file:active{opacity:.6}
 #src-row{display:flex;gap:8px;margin-top:4px}
 .srctgl{flex:1;padding:7px 4px;border-radius:10px;border:1px solid var(--border);color:var(--txt2);text-align:center;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s;user-select:none;-webkit-user-select:none}
@@ -388,6 +389,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         <button id="btn-ref-start">● 기준 시작</button>
         <button id="btn-ref-stop">■ 기준 종료</button>
         <button id="btn-ref-file">📁 파일</button>
+        <button id="btn-ref-export" style="display:none">📤 공유</button>
       </div>
     </div>
     <div id="fb-txt"></div>
@@ -397,7 +399,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <button id="btn-main" class="start" disabled>▶  분석 시작</button>
   </div>
 </div><!-- #app -->
-<input type="file" id="ref-file-input" accept="video/*" style="display:none">
+<input type="file" id="ref-file-input" accept="video/*,image/*,.aplref" style="display:none">
 <input type="file" id="ana-file-input" accept="video/*" style="display:none">
 
 <!-- Frame Picker Modal -->
@@ -451,28 +453,28 @@ ko:{flag:'🇰🇷',label:'KO',voice_lang:'ko-KR',
   fp_title:'기준 자세 선택',fp_info:'스크롤로 프레임 선택 후 저장하세요',
   fp_save:'✓ 이 자세로 저장',fp_prev:'◀ 이전',fp_next:'다음 ▶',
   fp_detecting:'자세 감지 중...',fp_pose_ok:'✓ 자세 감지됨',fp_pose_bad:'✕ 자세 미감지',
-  sum_title:' 결과',sum_close:'확인',sum_score_lbl:'전체 정확도',
+  sum_title:' 결과',sum_close:'확인',sum_score_lbl:'종합 점수',
   sum_zone_pre:'기준 자세 감지 ',sum_zone_suf:'프레임 기준',
   sum_joints_title:'관절별 수행 분석',
   sum_exercise:'운동 종목',sum_reps:'수행 횟수',sum_time:'총 운동 시간',
   sum_accuracy:'분석 정확도',sum_excellent:'우수',sum_good_rating:'보통',sum_poor:'개선 필요',
   sum_coaching:'주요 코칭 내용',sum_reps_unit:'회',
   joint_knee:'무릎',joint_hip:'고관절',joint_trunk:'몸통',joint_spine:'척추',
-  voice_start:' 분석을 시작합니다.',voice_stop:'운동이 종료되었습니다. 수고하셨습니다.',
-  voice_ref_saved:'기준 자세가 저장되었습니다.',
-  voice_ref_fail:'자세를 인식하지 못했습니다. 다시 시도해 주세요.',
-  voice_ref_full:'전신이 카메라에 보이도록 서 주세요.',
+  voice_start:' 분석 시작.',voice_stop:'운동 끝! 수고했어.',
+  voice_ref_saved:'기준 자세 저장됐어.',
+  voice_ref_fail:'자세 인식 실패. 다시 해봐.',
+  voice_ref_full:'전신이 보이게 서 있어.',
   model_ready:'AI 준비완료',model_fail:'로드 실패',mdl_loading:'로딩 중',
-  PRAISE:['완벽합니다!','아주 좋아요!','훌륭합니다!','자세가 좋습니다!'],
+  PRAISE:['완벽해!','아주 좋아!','훌륭해!','자세 좋아!'],
   FB:{
-    knee_str:{warn:'무릎을 더 구부려 보세요.',crit:'무릎을 더 구부려 주세요. 90도를 목표로 하세요.'},
-    knee_bnt:{warn:'무릎을 약간 펴 보세요.',crit:'무릎이 너무 많이 구부러졌습니다.'},
-    hip_up:{warn:'엉덩이를 조금 더 내려 보세요.',crit:'고관절을 더 굴곡해 주세요. 엉덩이를 더 내리세요.'},
-    hip_fwd:{warn:'상체를 조금 세워 보세요.',crit:'골반이 앞으로 기울었습니다. 상체를 세워 주세요.'},
-    trunk_fwd:{warn:'상체를 조금 세워 보세요.',crit:'상체가 너무 앞으로 기울었습니다. 등을 세워 주세요.'},
-    trunk_up:{warn:'상체를 앞으로 조금 기울여 보세요.',crit:'상체를 앞으로 더 기울여 주세요.'},
-    spine_flx:{warn:'등을 조금 더 펴 보세요.',crit:'등이 굽어 있습니다. 척추를 펴 주세요.'},
-    spine_ext:{warn:'허리를 중립으로 조정해 보세요.',crit:'허리가 과하게 젖혀졌습니다. 척추 중립을 유지하세요.'},
+    knee_str:{warn:'무릎 더 구부려.',crit:'무릎 90도로 더 구부려.'},
+    knee_bnt:{warn:'무릎 더 펴.',crit:'무릎 너무 굽혔어. 펴.'},
+    hip_up:{warn:'엉덩이 더 낮춰.',crit:'엉덩이 더 내려.'},
+    hip_fwd:{warn:'상체 더 세워.',crit:'골반 앞으로 기울었어. 세워.'},
+    trunk_fwd:{warn:'상체 더 세워.',crit:'등 너무 굽었어. 세워.'},
+    trunk_up:{warn:'상체 앞으로 기울여.',crit:'상체 더 기울여.'},
+    spine_flx:{warn:'등 더 펴.',crit:'등 굽었어. 펴.'},
+    spine_ext:{warn:'허리 중립 유지.',crit:'허리 너무 젖혔어.'},
   }
 },
 en:{flag:'🇺🇸',label:'EN',voice_lang:'en-US',
@@ -1536,11 +1538,84 @@ function onRefFileSelected(e){
   const file=e.target.files[0];
   e.target.value='';
   if(!file) return;
-  if(_fpBlobURL) URL.revokeObjectURL(_fpBlobURL);
-  _fpBlobURL=URL.createObjectURL(file);
-  _refChunks=[];
-  showFramePickerFromURL(_fpBlobURL);
+  const isImg=file.type.startsWith('image/');
+  const isAplRef=file.name.endsWith('.aplref')||file.type==='application/json';
+  if(isAplRef){
+    // APL 기준자세 파일 (.aplref) 직접 로드
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const data=JSON.parse(ev.target.result);
+        if(data.angles){
+          const exId=data.exercise||S.ex.id;
+          S.refs[exId]=data.angles;
+          if(data.dir) S.dir=data.dir;
+          localStorage.setItem('apl_ref_'+exId,JSON.stringify({angles:data.angles,dir:data.dir,at:new Date().toISOString()}));
+          speak(TX[CL].voice_ref_saved);
+          updateRefUI();updateExChips();
+          $('btn-main').disabled=false;
+        }else{speak(TX[CL].voice_ref_fail);}
+      }catch(err){speak(TX[CL].voice_ref_fail);}
+    };
+    reader.readAsText(file);
+  }else if(isImg){
+    // 사진에서 자세 자동 인식 → 기준자세 저장
+    setRefFromImage(file);
+  }else{
+    // 비디오 — 기존 프레임 피커 flow
+    if(_fpBlobURL) URL.revokeObjectURL(_fpBlobURL);
+    _fpBlobURL=URL.createObjectURL(file);
+    _refChunks=[];
+    showFramePickerFromURL(_fpBlobURL);
+  }
 }
+// ── 이미지에서 기준자세 자동 인식 ─────────────────────────────────────────
+async function setRefFromImage(file){
+  if(!S.det){speak(TX[CL].voice_ref_fail);return;}
+  const url=URL.createObjectURL(file);
+  const img=new Image();
+  img.crossOrigin='anonymous';
+  await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=url;});
+  try{
+    const poses=await S.det.estimatePoses(img,{maxPoses:1,flipHorizontal:false});
+    URL.revokeObjectURL(url);
+    if(!poses||!poses.length){speak(TX[CL].voice_ref_fail);return;}
+    const kps=poses[0].keypoints;
+    const angles=extractAngles(kps);
+    if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
+    S.refs[S.ex.id]=angles;
+    localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));
+    const succ=$('succ');succ.classList.add('on');
+    speak(TX[CL].voice_ref_saved);
+    await sleep(1400);succ.classList.remove('on');
+    updateRefUI();updateExChips();
+    $('btn-main').disabled=false;
+  }catch(e){URL.revokeObjectURL(url);speak(TX[CL].voice_ref_fail);}
+}
+
+// ── 기준자세 내보내기 (.aplref JSON) ────────────────────────────────────────
+function exportRef(){
+  const angles=S.refs[S.ex.id];
+  if(!angles){return;}
+  const data={v:1,source:'APL Motion Coach',exercise:S.ex.id,
+    exerciseName:S.ex.name,dir:S.dir,angles,at:new Date().toISOString()};
+  const json=JSON.stringify(data,null,2);
+  const blob=new Blob([json],{type:'application/json'});
+  const fname=`APL_${S.ex.name}_ref.aplref`;
+  const file=new File([blob],fname,{type:'application/json'});
+  const isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  if(isMobile&&navigator.canShare&&navigator.canShare({files:[file]})){
+    navigator.share({files:[file],title:'APL 기준자세',text:S.ex.name+'기준자세 파일'})
+      .catch(()=>_downloadBlob(blob,fname));
+  }else{_downloadBlob(blob,fname);}
+}
+function _downloadBlob(blob,fname){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=fname;document.body.appendChild(a);a.click();
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},2000);
+}
+
 function onAnaFileSelected(e){
   const file=e.target.files[0];
   e.target.value='';
@@ -1670,7 +1745,7 @@ function showSummary(elapsed){
   }
   const pct=totalAll>0?Math.round(totalG/totalAll*100):0;
   const scoreEl=$('sum-score-num');
-  scoreEl.textContent=pct+'%';
+  scoreEl.textContent=pct+'점';
   scoreEl.className='sum-score-num '+(pct>=80?'good':pct>=50?'warn':'crit');
   $('sum-score-lbl').innerHTML=L.sum_score_lbl+'<br><span style="font-size:11px">'+L.sum_zone_pre+st.zoneFrames+L.sum_zone_suf+'</span>';
   $('sum-joints-lbl').textContent=L.sum_joints_title;
@@ -1680,12 +1755,12 @@ function showSummary(elapsed){
     const j=st.joints[k],tot=j.g+j.w+j.c||1;
     const gp=Math.round(j.g/tot*100),wp=Math.round(j.w/tot*100),cp=100-gp-wp;
     const div=document.createElement('div');div.className='bar-row';
-    div.innerHTML=`<span class="bar-name">${jlbls[k]}</span><div class="bar-track"><div class="bar-g" style="width:${gp}%"></div><div class="bar-w" style="width:${wp}%"></div><div class="bar-c" style="width:${cp}%"></div></div><span class="bar-pct">${gp}%</span>`;
+    div.innerHTML=`<span class="bar-name">${jlbls[k]}</span><div class="bar-track"><div class="bar-g" style="width:${gp}%"></div><div class="bar-w" style="width:${wp}%"></div><div class="bar-c" style="width:${cp}%"></div></div><span class="bar-pct">${gp}점</span>`;
     bars.appendChild(div);
   }
   const info=$('sum-info');info.innerHTML='';
   const qual=pct>=80?L.sum_excellent:pct>=50?L.sum_good_rating:L.sum_poor;
-  const rows=[[L.sum_exercise,exName],[L.sum_reps,S.repCount+L.sum_reps_unit],[L.sum_time,m+':'+s],[L.sum_accuracy,pct+'%  ('+qual+')']];
+  const rows=[[L.sum_exercise,exName],[L.sum_reps,S.repCount+L.sum_reps_unit],[L.sum_time,m+':'+s],[L.sum_accuracy,pct+'점  ('+qual+')']];
   for(const[l,v]of rows){
     const d=document.createElement('div');d.className='sum-row';
     d.innerHTML=`<span class="sum-row-lbl">${l}</span><span class="sum-row-val">${v}</span>`;
@@ -1716,6 +1791,7 @@ function updateRefUI(){
   $('ref-dsc').textContent=r?dt:L.ref_none_dsc;
   if(!$('btn-ref-start').classList.contains('recording'))
     $('btn-ref-start').textContent=r?L.btn_ref_start_redo:L.btn_ref_start;
+  $('btn-ref-export').style.display=r?'':'none'; // 기준 저장된 경우만 내보내기 표시
 }
 function buildExChips(){
   const row=$('ex-row');row.innerHTML='';
@@ -1854,6 +1930,7 @@ async function init(){
   });
   $('btn-ref-start').addEventListener('click',startRefRecording);
   $('btn-ref-file').addEventListener('click',openRefFileUpload);
+  $('btn-ref-export').addEventListener('click',exportRef);
   $('ref-file-input').addEventListener('change',onRefFileSelected);
   $('ana-file-input').addEventListener('change',onAnaFileSelected);
   $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));

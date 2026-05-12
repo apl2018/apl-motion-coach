@@ -168,7 +168,6 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #btn-ref-stop.on{display:block}
 #btn-ref-stop:active{opacity:.6}
 #btn-ref-file{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--txt2);font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
-#btn-ref-export{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(76,175,80,.5);color:#4CAF50;font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
 #btn-ref-file:active{opacity:.6}
 #src-row{display:flex;gap:8px;margin-top:4px}
 .srctgl{flex:1;padding:7px 4px;border-radius:10px;border:1px solid var(--border);color:var(--txt2);text-align:center;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s;user-select:none;-webkit-user-select:none}
@@ -176,6 +175,49 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 .srctgl:active{opacity:.7}
 #ana-file-label{font-size:11px;color:var(--txt2);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:15px}
 #fb-txt{text-align:center;font-size:12px;color:var(--txt2);min-height:14px;transition:opacity .3s}
+
+/* ATHLETE NAME INPUT */
+#athlete-row{padding:0 0 6px 0}
+#athlete-name{width:100%;padding:7px 10px;border-radius:8px;
+  border:1px solid var(--border);background:var(--card);color:var(--txt);
+  font-size:12px;box-sizing:border-box;outline:none}
+#athlete-name::placeholder{color:var(--txt3)}
+#athlete-name:focus{border-color:var(--green)}
+#btn-data-open{background:transparent;border:none;font-size:18px;cursor:pointer;
+  padding:4px;line-height:1;opacity:.8}
+#btn-data-open:active{opacity:.5}
+/* DATA MODAL */
+#data-modal{position:fixed;inset:0;background:rgba(0,0,0,.88);
+  display:none;flex-direction:column;align-items:center;justify-content:center;
+  z-index:500;padding:16px;box-sizing:border-box}
+#data-modal.on{display:flex}
+#data-box{background:var(--card);border-radius:16px;width:100%;max-width:420px;
+  max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
+#data-hdr{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
+#data-title{font-size:15px;font-weight:700;color:var(--txt)}
+#btn-data-close{background:transparent;border:none;color:var(--txt2);font-size:20px;cursor:pointer;padding:0 4px}
+#data-search{margin:10px 12px 6px;padding:8px 12px;border-radius:8px;
+  border:1px solid var(--border);background:var(--bg);color:var(--txt);
+  font-size:13px;outline:none;flex-shrink:0}
+#data-search:focus{border-color:var(--green)}
+#data-list{flex:1;overflow-y:auto;padding:0 12px 8px;display:flex;flex-direction:column;gap:6px}
+.data-row{display:flex;align-items:center;gap:8px;padding:8px 10px;
+  background:var(--bg);border-radius:8px;border:1px solid var(--border)}
+.data-row-info{flex:1;min-width:0}
+.data-row-name{font-size:13px;font-weight:700;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.data-row-sub{font-size:11px;color:var(--txt3);margin-top:2px}
+.data-row-copy{flex-shrink:0;padding:5px 10px;border-radius:6px;
+  background:transparent;border:1px solid var(--border);color:var(--txt2);
+  font-size:11px;cursor:pointer;white-space:nowrap}
+.data-row-copy:active{background:var(--green);color:#fff;border-color:transparent}
+.data-empty{color:var(--txt3);font-size:13px;text-align:center;padding:30px 0}
+#data-footer{display:flex;align-items:center;justify-content:space-between;
+  padding:10px 16px;border-top:1px solid var(--border);flex-shrink:0}
+#data-count{font-size:12px;color:var(--txt3)}
+#btn-data-copy-all{padding:8px 16px;border-radius:8px;border:none;
+  background:var(--green);color:#fff;font-size:13px;font-weight:700;cursor:pointer}
+#btn-data-copy-all:active{opacity:.8}
 
 /* SUMMARY MODAL */
 #summary{position:fixed;inset:0;background:rgba(0,0,0,.88);
@@ -252,7 +294,11 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 .fp-nbtn{flex:1;padding:9px;border-radius:10px;border:1px solid var(--border);
   background:transparent;color:var(--txt2);font-size:13px;cursor:pointer;font-weight:600}
 .fp-nbtn:active{opacity:.6}
-#fp-save-row{display:flex;}
+#fp-save-row{display:flex;gap:8px;}
+#fp-photo{padding:13px 16px;border-radius:12px;border:1px solid rgba(255,255,255,.25);
+  background:transparent;color:var(--txt2);font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}
+#fp-photo:disabled{opacity:.3;cursor:not-allowed}
+#fp-photo:active:not(:disabled){opacity:.7}
 #fp-save{flex:1;padding:13px;border-radius:12px;border:none;
   background:var(--green);color:#fff;font-size:14px;font-weight:700;cursor:pointer}
 #fp-save:disabled{background:rgba(255,255,255,.1);color:var(--txt3);cursor:not-allowed}
@@ -309,6 +355,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
           <div class="lpopt" data-lang="fr"><span class="lpflag">🇫🇷</span>Français</div>
         </div>
       </div>
+      <button id="btn-data-open" title="기준자세 데이터">📊</button>
       <button id="btn-flip-hdr" title="카메라 전환">🔄</button>
       <div id="mdl-status">
         <div class="mdot" id="mdot"></div>
@@ -380,6 +427,9 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
       </div>
       <div id="ana-file-label"></div>
     </div>
+    <div id="athlete-row">
+      <input id="athlete-name" type="text" placeholder="선수 이름 입력 (기준자세 저장 시 기록됨)" autocomplete="off" spellcheck="false">
+    </div>
     <div id="ref-card">
       <div id="ref-info">
         <div id="ref-ttl">기준 자세 없음</div>
@@ -389,7 +439,6 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         <button id="btn-ref-start">● 기준 시작</button>
         <button id="btn-ref-stop">■ 기준 종료</button>
         <button id="btn-ref-file">📁 파일</button>
-        <button id="btn-ref-export" style="display:none">📤 공유</button>
       </div>
     </div>
     <div id="fb-txt"></div>
@@ -401,6 +450,22 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 </div><!-- #app -->
 <input type="file" id="ref-file-input" accept="video/*,image/*,.aplref" style="display:none">
 <input type="file" id="ana-file-input" accept="video/*" style="display:none">
+
+<!-- Data Modal -->
+<div id="data-modal">
+  <div id="data-box">
+    <div id="data-hdr">
+      <span id="data-title">📊 기준자세 데이터</span>
+      <button id="btn-data-close">✕</button>
+    </div>
+    <input id="data-search" type="search" placeholder="선수 이름 검색..." autocomplete="off">
+    <div id="data-list"></div>
+    <div id="data-footer">
+      <span id="data-count"></span>
+      <button id="btn-data-copy-all">📋 전체 복사</button>
+    </div>
+  </div>
+</div>
 
 <!-- Frame Picker Modal -->
 <div id="fp-modal">
@@ -421,7 +486,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
       <button class="fp-nbtn" id="fp-next">다음 ▶</button>
     </div>
     <div id="fp-save-row">
-      <button id="fp-save" disabled>✓ 이 자세로 저장</button>
+      <button id="fp-photo" disabled>📷 사진</button>
+      <button id="fp-save" disabled>✓ 저장</button>
     </div>
   </div>
 </div>
@@ -976,6 +1042,7 @@ function _setupFramePicker(url){
   $('fp-chip').textContent=L.fp_detecting;
   $('fp-chip').className='';
   $('fp-save').disabled=true;
+  $('fp-photo').disabled=true;
   _fpPoses=null;
   fpv.onloadedmetadata=()=>{
     const dur=fpv.duration||1;
@@ -1008,10 +1075,12 @@ async function _detectFpPose(){
     if(_fpPoses){
       $('fp-chip').textContent=TX[CL].fp_pose_ok;$('fp-chip').className='ok';
       $('fp-save').disabled=false;
+      $('fp-photo').disabled=false;
       _drawFpSkel(_fpPoses.keypoints,fpc,fctx);
     }else{
       $('fp-chip').textContent=TX[CL].fp_pose_bad;$('fp-chip').className='bad';
       $('fp-save').disabled=true;
+      $('fp-photo').disabled=true;
     }
   }catch(e){console.warn('fp detect:',e);}
 }
@@ -1034,6 +1103,32 @@ function _drawFpSkel(kps,canvas,c2){
     c2.fillStyle='#4CAF50';c2.fill();c2.strokeStyle='#fff';c2.lineWidth=2;c2.stroke();
   }
 }
+// ── 기준자세 프레임 사진 저장 ─────────────────────────────────────────────
+function saveFpPhoto(){
+  const fpv=$('fp-vid');
+  if(!fpv.videoWidth||!fpv.videoHeight) return;
+  const fc=document.createElement('canvas');
+  fc.width=fpv.videoWidth;fc.height=fpv.videoHeight;
+  fc.getContext('2d').drawImage(fpv,0,0);
+  const fname=`APL_${S.ex.name}_기준자세.jpg`;
+  fc.toBlob(blob=>{
+    if(!blob) return;
+    const file=new File([blob],fname,{type:'image/jpeg'});
+    const isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if(isMobile&&navigator.canShare&&navigator.canShare({files:[file]})){
+      // 모바일: 공유 시트에서 '이미지 저장' → 카메라롤에 저장
+      navigator.share({files:[file],title:'APL 기준자세',text:S.ex.name})
+        .catch(()=>{});
+    }else{
+      // PC: 자동 다운로드
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=fname;document.body.appendChild(a);a.click();
+      setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},2000);
+    }
+  },'image/jpeg',0.92);
+}
+
 async function saveRefFrame(){
   if(!_fpPoses){await _detectFpPose();}
   if(!_fpPoses){speak(TX[CL].voice_ref_fail);return;}
@@ -1042,12 +1137,110 @@ async function saveRefFrame(){
   if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
   S.refs[S.ex.id]=angles;
   try{localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));}catch(e){}
+  saveRefLog(angles); // 데이터 로그 기록
+  // PC에서 기준 저장 시 자동으로 사진도 다운로드 (모바일은 📷 버튼 사용)
+  if(!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) saveFpPhoto();
   const succ=$('succ');succ.classList.add('on');
   speak(TX[CL].voice_ref_saved);
   await sleep(1400);succ.classList.remove('on');
   closeFramePicker();updateRefUI();updateExChips();
   $('btn-main').disabled=false;
 }
+// ── 기준자세 로그 저장 ──────────────────────────────────────────────────────
+function saveRefLog(angles){
+  const name=($("athlete-name").value||"").trim()||"(이름 없음)";
+  const entry={
+    name,
+    exId:S.ex.id,
+    exName:S.ex.name,
+    dir:S.dir,
+    knee:angles.knee!==null?Math.round(angles.knee*10)/10:null,
+    hip:angles.hip!==null?Math.round(angles.hip*10)/10:null,
+    trunk:angles.trunk!==null?Math.round(angles.trunk*10)/10:null,
+    spine:angles.spine!==null?Math.round(angles.spine*10)/10:null,
+    at:new Date().toISOString()
+  };
+  try{
+    const log=JSON.parse(localStorage.getItem("apl_ref_log")||"[]");
+    log.unshift(entry); // 최신순
+    if(log.length>500) log.length=500; // 최대 500개 유지
+    localStorage.setItem("apl_ref_log",JSON.stringify(log));
+  }catch(e){}
+}
+
+// ── 기준자세 데이터 모달 ────────────────────────────────────────────────────
+function openDataModal(){
+  $("data-search").value="";
+  renderDataList("");
+  $("data-modal").classList.add("on");
+  setTimeout(()=>$("data-search").focus(),200);
+}
+function closeDataModal(){
+  $("data-modal").classList.remove("on");
+}
+function renderDataList(q){
+  const list=$("data-list");
+  let log=[];
+  try{log=JSON.parse(localStorage.getItem("apl_ref_log")||"[]");}catch(e){}
+  const qLow=q.trim().toLowerCase();
+  const filtered=qLow?log.filter(e=>e.name.toLowerCase().includes(qLow)):log;
+  $("data-count").textContent=`${filtered.length}개`;
+  if(!filtered.length){
+    list.innerHTML=`<div class="data-empty">${qLow?"검색 결과 없음":"저장된 데이터 없음"}</div>`;
+    return;
+  }
+  list.innerHTML="";
+  filtered.forEach((e,idx)=>{
+    const d=new Date(e.at);
+    const dt=`${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,"0")}`;
+    const dirLabel={left:"왼쪽",right:"오른쪽",front:"정면",back:"후면"}[e.dir]||e.dir;
+    const row=document.createElement("div");
+    row.className="data-row";
+    row.innerHTML=`
+      <div class="data-row-info">
+        <div class="data-row-name">${e.name}</div>
+        <div class="data-row-sub">${e.exName} · ${dirLabel} · ${dt}</div>
+        <div class="data-row-sub" style="color:var(--txt2);margin-top:2px">
+          무릎 ${e.knee??"-"}° / 고관절 ${e.hip??"-"}° / 몸통 ${e.trunk??"-"}° / 척추 ${e.spine??"-"}°
+        </div>
+      </div>
+      <button class="data-row-copy" data-idx="${idx}">📋 복사</button>
+    `;
+    row.querySelector(".data-row-copy").addEventListener("click",()=>copyDataRow(e));
+    list.appendChild(row);
+  });
+}
+function copyDataRow(e){
+  const d=new Date(e.at);
+  const dt=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const dirLabel={left:"왼쪽",right:"오른쪽",front:"정면",back:"후면"}[e.dir]||e.dir;
+  const row=[e.name,e.exName,dirLabel,e.knee??""  ,e.hip??"",e.trunk??"",e.spine??"",dt].join("\t");
+  navigator.clipboard.writeText(row).then(()=>{
+    // 복사 완료 피드백
+    $("data-count").textContent="✅ 복사됨!";
+    setTimeout(()=>renderDataList($("data-search").value),1500);
+  }).catch(()=>{});
+}
+function copyAllData(){
+  let log=[];
+  try{log=JSON.parse(localStorage.getItem("apl_ref_log")||"[]");}catch(e){}
+  const q=$("data-search").value.trim().toLowerCase();
+  const filtered=q?log.filter(e=>e.name.toLowerCase().includes(q)):log;
+  if(!filtered.length) return;
+  const header="선수명\t운동명\t촬영방향\t무릎(°)\t고관절(°)\t몸통(°)\t척추(°)\t날짜";
+  const rows=filtered.map(e=>{
+    const d=new Date(e.at);
+    const dt=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    const dirLabel={left:"왼쪽",right:"오른쪽",front:"정면",back:"후면"}[e.dir]||e.dir;
+    return [e.name,e.exName,dirLabel,e.knee??"",e.hip??"",e.trunk??"",e.spine??"",dt].join("\t");
+  });
+  const tsv=[header,...rows].join("\n");
+  navigator.clipboard.writeText(tsv).then(()=>{
+    $("data-count").textContent=`✅ ${filtered.length}개 복사됨!`;
+    setTimeout(()=>renderDataList($("data-search").value),2000);
+  }).catch(()=>{});
+}
+
 function closeFramePicker(){
   $('fp-modal').classList.remove('on');
   const fpv=$('fp-vid');
@@ -1585,6 +1778,7 @@ async function setRefFromImage(file){
     if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
     S.refs[S.ex.id]=angles;
     localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));
+    saveRefLog(angles); // 데이터 로그 기록
     const succ=$('succ');succ.classList.add('on');
     speak(TX[CL].voice_ref_saved);
     await sleep(1400);succ.classList.remove('on');
@@ -1593,28 +1787,6 @@ async function setRefFromImage(file){
   }catch(e){URL.revokeObjectURL(url);speak(TX[CL].voice_ref_fail);}
 }
 
-// ── 기준자세 내보내기 (.aplref JSON) ────────────────────────────────────────
-function exportRef(){
-  const angles=S.refs[S.ex.id];
-  if(!angles){return;}
-  const data={v:1,source:'APL Motion Coach',exercise:S.ex.id,
-    exerciseName:S.ex.name,dir:S.dir,angles,at:new Date().toISOString()};
-  const json=JSON.stringify(data,null,2);
-  const blob=new Blob([json],{type:'application/json'});
-  const fname=`APL_${S.ex.name}_ref.aplref`;
-  const file=new File([blob],fname,{type:'application/json'});
-  const isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  if(isMobile&&navigator.canShare&&navigator.canShare({files:[file]})){
-    navigator.share({files:[file],title:'APL 기준자세',text:S.ex.name+'기준자세 파일'})
-      .catch(()=>_downloadBlob(blob,fname));
-  }else{_downloadBlob(blob,fname);}
-}
-function _downloadBlob(blob,fname){
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;a.download=fname;document.body.appendChild(a);a.click();
-  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},2000);
-}
 
 function onAnaFileSelected(e){
   const file=e.target.files[0];
@@ -1791,7 +1963,6 @@ function updateRefUI(){
   $('ref-dsc').textContent=r?dt:L.ref_none_dsc;
   if(!$('btn-ref-start').classList.contains('recording'))
     $('btn-ref-start').textContent=r?L.btn_ref_start_redo:L.btn_ref_start;
-  $('btn-ref-export').style.display=r?'':'none'; // 기준 저장된 경우만 내보내기 표시
 }
 function buildExChips(){
   const row=$('ex-row');row.innerHTML='';
@@ -1930,8 +2101,13 @@ async function init(){
   });
   $('btn-ref-start').addEventListener('click',startRefRecording);
   $('btn-ref-file').addEventListener('click',openRefFileUpload);
-  $('btn-ref-export').addEventListener('click',exportRef);
   $('ref-file-input').addEventListener('change',onRefFileSelected);
+  $('fp-photo').addEventListener('click',saveFpPhoto);
+  $('btn-data-open').addEventListener('click',openDataModal);
+  $('btn-data-close').addEventListener('click',closeDataModal);
+  $('btn-data-copy-all').addEventListener('click',copyAllData);
+  $('data-search').addEventListener('input',e=>renderDataList(e.target.value));
+  $('data-modal').addEventListener('click',e=>{if(e.target===$('data-modal'))closeDataModal();});
   $('ana-file-input').addEventListener('change',onAnaFileSelected);
   $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));
   $('src-file-btn').addEventListener('click',()=>switchSrcMode('file'));

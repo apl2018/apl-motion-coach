@@ -207,10 +207,16 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 .data-row-info{flex:1;min-width:0}
 .data-row-name{font-size:13px;font-weight:700;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .data-row-sub{font-size:11px;color:var(--txt3);margin-top:2px}
-.data-row-copy{flex-shrink:0;padding:5px 10px;border-radius:6px;
-  background:transparent;border:1px solid var(--border);color:var(--txt2);
-  font-size:11px;cursor:pointer;white-space:nowrap}
+.data-row-actions{display:flex;flex-direction:column;gap:4px;flex-shrink:0}
+.data-row-copy,.data-row-del{padding:5px 8px;border-radius:6px;
+  border:1px solid var(--border);font-size:13px;cursor:pointer;white-space:nowrap}
+.data-row-copy{background:transparent;color:var(--txt2)}
 .data-row-copy:active{background:var(--green);color:#fff;border-color:transparent}
+.data-row-del{background:transparent;color:var(--txt3)}
+.data-row-del:active{background:#E53935;color:#fff;border-color:transparent}
+#btn-data-del-all{padding:8px 12px;border-radius:8px;border:1px solid rgba(229,57,53,.4);
+  background:transparent;color:#E53935;font-size:13px;font-weight:700;cursor:pointer}
+#btn-data-del-all:active{background:#E53935;color:#fff;border-color:transparent}
 .data-empty{color:var(--txt3);font-size:13px;text-align:center;padding:30px 0}
 #data-footer{display:flex;align-items:center;justify-content:space-between;
   padding:10px 16px;border-top:1px solid var(--border);flex-shrink:0}
@@ -294,6 +300,14 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 .fp-nbtn{flex:1;padding:9px;border-radius:10px;border:1px solid var(--border);
   background:transparent;color:var(--txt2);font-size:13px;cursor:pointer;font-weight:600}
 .fp-nbtn:active{opacity:.6}
+#fp-name-row{margin-bottom:-2px}
+#fp-athlete{width:100%;padding:10px 12px;border-radius:10px;
+  border:2px solid var(--border);background:rgba(255,255,255,.07);
+  color:var(--txt);font-size:14px;box-sizing:border-box;outline:none;
+  transition:border-color .2s}
+#fp-athlete:focus{border-color:var(--green)}
+#fp-athlete.required{border-color:#E53935;animation:shake .3s}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 #fp-save-row{display:flex;gap:8px;}
 #fp-photo{padding:13px 16px;border-radius:12px;border:1px solid rgba(255,255,255,.25);
   background:transparent;color:var(--txt2);font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}
@@ -462,7 +476,10 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div id="data-list"></div>
     <div id="data-footer">
       <span id="data-count"></span>
-      <button id="btn-data-copy-all">📋 전체 복사</button>
+      <div style="display:flex;gap:6px">
+        <button id="btn-data-copy-all">📋 전체 복사</button>
+        <button id="btn-data-del-all">🗑️ 전체 삭제</button>
+      </div>
     </div>
   </div>
 </div>
@@ -484,6 +501,9 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div id="fp-nav">
       <button class="fp-nbtn" id="fp-prev">◀ 이전</button>
       <button class="fp-nbtn" id="fp-next">다음 ▶</button>
+    </div>
+    <div id="fp-name-row">
+      <input id="fp-athlete" type="text" placeholder="선수 이름 입력 후 저장" autocomplete="off" spellcheck="false">
     </div>
     <div id="fp-save-row">
       <button id="fp-photo" disabled>📷 사진</button>
@@ -1044,6 +1064,10 @@ function _setupFramePicker(url){
   $('fp-save').disabled=true;
   $('fp-photo').disabled=true;
   _fpPoses=null;
+  // 메인 선수명 → 피커 입력란 자동 복사
+  $('fp-athlete').value=$('athlete-name').value||'';
+  $('fp-athlete').classList.remove('required');
+  setTimeout(()=>$('fp-athlete').focus(),300);
   fpv.onloadedmetadata=()=>{
     const dur=fpv.duration||1;
     $('fp-scrub').max=Math.round(dur*30);
@@ -1137,7 +1161,18 @@ async function saveRefFrame(){
   if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
   S.refs[S.ex.id]=angles;
   try{localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));}catch(e){}
-  saveRefLog(angles); // 데이터 로그 기록
+  // 선수명 확인 (fp-athlete 우선, 없으면 메인 입력란)
+  const _athleteName=($('fp-athlete').value||$('athlete-name').value||'').trim();
+  if(!_athleteName){
+    $('fp-athlete').classList.add('required');
+    $('fp-athlete').focus();
+    setTimeout(()=>$('fp-athlete').classList.remove('required'),600);
+    $('btn-main').disabled=false;
+    return; // 이름 없으면 저장 중단
+  }
+  // 메인 입력란도 동기화
+  $('athlete-name').value=_athleteName;
+  saveRefLog(angles,_athleteName); // 데이터 로그 기록
   // PC에서 기준 저장 시 자동으로 사진도 다운로드 (모바일은 📷 버튼 사용)
   if(!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) saveFpPhoto();
   const succ=$('succ');succ.classList.add('on');
@@ -1147,8 +1182,8 @@ async function saveRefFrame(){
   $('btn-main').disabled=false;
 }
 // ── 기준자세 로그 저장 ──────────────────────────────────────────────────────
-function saveRefLog(angles){
-  const name=($("athlete-name").value||"").trim()||"(이름 없음)";
+function saveRefLog(angles,name){
+  name=(name||"").trim()||"(이름 없음)";
   const entry={
     name,
     exId:S.ex.id,
@@ -1204,9 +1239,13 @@ function renderDataList(q){
           무릎 ${e.knee??"-"}° / 고관절 ${e.hip??"-"}° / 몸통 ${e.trunk??"-"}° / 척추 ${e.spine??"-"}°
         </div>
       </div>
-      <button class="data-row-copy" data-idx="${idx}">📋 복사</button>
+      <div class="data-row-actions">
+        <button class="data-row-copy">📋</button>
+        <button class="data-row-del">🗑️</button>
+      </div>
     `;
     row.querySelector(".data-row-copy").addEventListener("click",()=>copyDataRow(e));
+    row.querySelector(".data-row-del").addEventListener("click",()=>deleteDataRow(e.at));
     list.appendChild(row);
   });
 }
@@ -1220,6 +1259,31 @@ function copyDataRow(e){
     $("data-count").textContent="✅ 복사됨!";
     setTimeout(()=>renderDataList($("data-search").value),1500);
   }).catch(()=>{});
+}
+function deleteDataRow(at){
+  try{
+    let log=JSON.parse(localStorage.getItem("apl_ref_log")||"[]");
+    log=log.filter(e=>e.at!==at);
+    localStorage.setItem("apl_ref_log",JSON.stringify(log));
+  }catch(e){}
+  renderDataList($("data-search").value);
+}
+function deleteAllData(){
+  const q=$("data-search").value.trim();
+  const msg=q?`"${q}" 검색 결과를 모두 삭제할까요?`:"저장된 데이터를 모두 삭제할까요?";
+  if(!confirm(msg)) return;
+  try{
+    if(q){
+      const qLow=q.toLowerCase();
+      let log=JSON.parse(localStorage.getItem("apl_ref_log")||"[]");
+      log=log.filter(e=>!e.name.toLowerCase().includes(qLow));
+      localStorage.setItem("apl_ref_log",JSON.stringify(log));
+    }else{
+      localStorage.removeItem("apl_ref_log");
+    }
+  }catch(e){}
+  renderDataList("");
+  $("data-search").value="";
 }
 function copyAllData(){
   let log=[];
@@ -1778,7 +1842,8 @@ async function setRefFromImage(file){
     if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
     S.refs[S.ex.id]=angles;
     localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));
-    saveRefLog(angles); // 데이터 로그 기록
+    const _imgAthlete=($('athlete-name').value||'').trim();
+    saveRefLog(angles,_imgAthlete||'(이름 없음)');
     const succ=$('succ');succ.classList.add('on');
     speak(TX[CL].voice_ref_saved);
     await sleep(1400);succ.classList.remove('on');
@@ -2108,6 +2173,7 @@ async function init(){
   $('btn-data-copy-all').addEventListener('click',copyAllData);
   $('data-search').addEventListener('input',e=>renderDataList(e.target.value));
   $('data-modal').addEventListener('click',e=>{if(e.target===$('data-modal'))closeDataModal();});
+  $('btn-data-del-all').addEventListener('click',deleteAllData);
   $('ana-file-input').addEventListener('change',onAnaFileSelected);
   $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));
   $('src-file-btn').addEventListener('click',()=>switchSrcMode('file'));

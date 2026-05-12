@@ -1413,11 +1413,16 @@ function saveRecording(){
   const exName=S.ex.name;
   const fname=`APL_${exName}_${stamp}.${ext}`;
   const file=new File([blob],fname,{type:saveMime,lastModified:Date.now()});
-  if(navigator.canShare&&navigator.canShare({files:[file]})){
+  // 모바일(iOS/Android)에서만 share sheet — 데스크톱은 바로 다운로드
+  const _isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  if(_isMobile&&navigator.canShare&&navigator.canShare({files:[file]})){
     navigator.share({files:[file],title:'APL Motion Coach',text:exName})
       .catch(err=>{if(err.name!=='AbortError')downloadVideo(blob,fname);})
       .finally(()=>{setTimeout(()=>{if(_srcMode==='camera')checkCameraHealth();},800);});
-  }else{downloadVideo(blob,fname);}
+  }else{
+    downloadVideo(blob,fname);
+    setTimeout(()=>{if(_srcMode==='camera')checkCameraHealth();},800);
+  }
 }
 function downloadVideo(blob,fname){
   const url=URL.createObjectURL(blob);
@@ -1582,17 +1587,18 @@ async function startLive(){
     _recAudioCtx.resume().catch(()=>{});
   }catch(e){_recAudioCtx=null;_recAudioDest=null;}
 
-  // ② Request mic permission (async — user activation may expire here, but AudioContext already created)
+  // ② TTS 사전 활성화 — 제스처 컨텍스트 내(await 전)에서 호출해야 iOS에서 동작
+  try{const _w=new SpeechSynthesisUtterance('');speechSynthesis.speak(_w);speechSynthesis.cancel();}catch(e){}
+
+  // ③ 마이크 권한 — 비동기 요청 (await 안함: 카운트다운/TTS 차단 방지)
   if(!S.audioStream){
-    try{
-      S.audioStream=await navigator.mediaDevices.getUserMedia({
-        audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1},
-        video:false
-      });
-    }catch(e){console.warn('Mic permission denied:',e);}
+    navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1},
+      video:false
+    }).then(s=>{S.audioStream=s;}).catch(e=>console.warn('Mic denied:',e));
   }
 
-  // ③ Countdown (camera mode) or play file (file mode)
+  // ⑤ Countdown (camera mode) or play file (file mode)
   const cdown=$('cdown'),cnum=$('cnum');
   if(_srcMode==='file'&&_anaFileURL){
     cdown.classList.add('on');
@@ -1735,16 +1741,7 @@ function updateExChips(){
   });
 }
 function resizeCam(){
-  const vw=vid.videoWidth,vh=vid.videoHeight;
-  // 카메라 모드: 비디오 비율에 맞게 cam-wrap 높이 조정 (뷰포트 52% 캡)
-  // 파일 모드: cam-wrap 높이 유지 (캔버스 크기만 업데이트)
-  if(_srcMode==='camera'&&vw&&vh){
-    const dw=$('cam-wrap').offsetWidth;
-    const maxH=window.innerHeight*0.52;
-    const dh=Math.min(dw*(vh/vw),maxH);
-    $('cam-wrap').style.height=dh+'px';
-  }
-  // 캔버스를 cam-wrap 크기에 맞춤 (항상 실행)
+  // cam-wrap 높이는 setAppHeight()가 전담 — 여기선 캔버스 크기만 업데이트
   requestAnimationFrame(()=>{
     const dw=$('cam-wrap').offsetWidth;
     const dh=$('cam-wrap').offsetHeight;
@@ -1754,7 +1751,9 @@ function resizeCam(){
   });
 }
 function checkCameraHealth(){
-  if(S.live||S.caps||_camBusy||_srcMode==='file') return;
+  if(S.live||S.caps||_srcMode==='file') return;
+  // _camBusy stuck 방지: 5초 이상 걸리면 강제 해제 후 재시도
+  if(_camBusy){setTimeout(()=>{if(_camBusy){_camBusy=false;checkCameraHealth();}},5000);return;}
   const tracks=S.stream?S.stream.getVideoTracks():[];
   const dead=tracks.length===0||tracks.every(t=>t.readyState==='ended');
   if(dead||vid.readyState<2){
@@ -1777,9 +1776,10 @@ async function restartCamera(){
     // 카메라 모드 transform 재적용
     vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
     cvs.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
+    setAppHeight(); // 레이아웃 70% 복원
     resizeCam();
   }catch(e){console.error('Camera restart failed:',e);}
-  _camBusy=false;
+  finally{_camBusy=false;}
 }
 
 // ── APPLY LANGUAGE ────────────────────────────────────────────────────────────
@@ -1910,7 +1910,8 @@ async function init(){
     // Auto-recover camera when app returns to foreground (e.g. after sharing video)
     document.addEventListener('visibilitychange',()=>{
       if(document.visibilityState==='visible'){
-        // 카메라 모드: 건강 체크 / 파일 모드이고 분석 중 아니면 카메라가 블랙인지 확인
+        // 레이아웃 즉시 복원 후 카메라 상태 점검
+        setAppHeight();
         if(_srcMode==='camera') setTimeout(checkCameraHealth,400);
         else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
       }

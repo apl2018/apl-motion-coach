@@ -177,15 +177,34 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #fb-txt{text-align:center;font-size:12px;color:var(--txt2);min-height:14px;transition:opacity .3s}
 
 /* ATHLETE NAME INPUT */
-#athlete-row{padding:0 0 6px 0}
-#athlete-name{width:100%;padding:7px 10px;border-radius:8px;
-  border:1px solid var(--border);background:var(--card);color:var(--txt);
-  font-size:12px;box-sizing:border-box;outline:none}
-#athlete-name::placeholder{color:var(--txt3)}
-#athlete-name:focus{border-color:var(--green)}
+
 #btn-data-open{background:transparent;border:none;font-size:18px;cursor:pointer;
   padding:4px;line-height:1;opacity:.8}
 #btn-data-open:active{opacity:.5}
+/* IMAGE NAME MODAL */
+#img-name-modal{position:fixed;inset:0;background:rgba(0,0,0,.75);
+  display:none;align-items:flex-end;justify-content:center;z-index:600;
+  padding-bottom:env(safe-area-inset-bottom)}
+#img-name-modal.on{display:flex}
+#img-name-box{background:var(--card);border-radius:18px 18px 0 0;
+  width:100%;max-width:480px;padding:20px 20px 28px;
+  display:flex;flex-direction:column;gap:12px}
+#img-name-title{font-size:15px;font-weight:700;color:var(--txt)}
+#img-name-hint{font-size:12px;color:var(--txt3)}
+#img-name-input{padding:11px 14px;border-radius:10px;
+  border:2px solid var(--border);background:var(--bg);color:var(--txt);
+  font-size:15px;outline:none;transition:border-color .2s}
+#img-name-input:focus{border-color:var(--green)}
+#img-name-input.required{border-color:#E53935;animation:shake .3s}
+#img-name-btns{display:flex;gap:10px}
+#img-name-cancel{flex:1;padding:11px;border-radius:10px;
+  border:1px solid var(--border);background:transparent;
+  color:var(--txt2);font-size:14px;cursor:pointer}
+#img-name-confirm{flex:2;padding:11px;border-radius:10px;
+  border:none;background:var(--green);color:#fff;
+  font-size:14px;font-weight:700;cursor:pointer}
+#img-name-confirm:active{opacity:.8}
+
 /* DATA MODAL */
 #data-modal{position:fixed;inset:0;background:rgba(0,0,0,.88);
   display:none;flex-direction:column;align-items:center;justify-content:center;
@@ -441,9 +460,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
       </div>
       <div id="ana-file-label"></div>
     </div>
-    <div id="athlete-row">
-      <input id="athlete-name" type="text" placeholder="선수 이름 입력 (기준자세 저장 시 기록됨)" autocomplete="off" spellcheck="false">
-    </div>
+
     <div id="ref-card">
       <div id="ref-info">
         <div id="ref-ttl">기준 자세 없음</div>
@@ -464,6 +481,19 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 </div><!-- #app -->
 <input type="file" id="ref-file-input" accept="video/*,image/*,.aplref" style="display:none">
 <input type="file" id="ana-file-input" accept="video/*" style="display:none">
+
+<!-- Image Name Modal -->
+<div id="img-name-modal">
+  <div id="img-name-box">
+    <div id="img-name-title">📷 사진에서 기준자세 인식</div>
+    <div id="img-name-hint">선수 이름을 입력하고 확인을 누르세요</div>
+    <input id="img-name-input" type="text" placeholder="선수 이름" autocomplete="off" spellcheck="false">
+    <div id="img-name-btns">
+      <button id="img-name-cancel">취소</button>
+      <button id="img-name-confirm">✓ 확인</button>
+    </div>
+  </div>
+</div>
 
 <!-- Data Modal -->
 <div id="data-modal">
@@ -1064,8 +1094,8 @@ function _setupFramePicker(url){
   $('fp-save').disabled=true;
   $('fp-photo').disabled=true;
   _fpPoses=null;
-  // 메인 선수명 → 피커 입력란 자동 복사
-  $('fp-athlete').value=$('athlete-name').value||'';
+  // 피커 열릴 때 입력란 초기화
+  $('fp-athlete').value='';
   $('fp-athlete').classList.remove('required');
   setTimeout(()=>$('fp-athlete').focus(),300);
   fpv.onloadedmetadata=()=>{
@@ -1162,7 +1192,7 @@ async function saveRefFrame(){
   S.refs[S.ex.id]=angles;
   try{localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));}catch(e){}
   // 선수명 확인 (fp-athlete 우선, 없으면 메인 입력란)
-  const _athleteName=($('fp-athlete').value||$('athlete-name').value||'').trim();
+  const _athleteName=($('fp-athlete').value||'').trim();
   if(!_athleteName){
     $('fp-athlete').classList.add('required');
     $('fp-athlete').focus();
@@ -1170,8 +1200,6 @@ async function saveRefFrame(){
     $('btn-main').disabled=false;
     return; // 이름 없으면 저장 중단
   }
-  // 메인 입력란도 동기화
-  $('athlete-name').value=_athleteName;
   saveRefLog(angles,_athleteName); // 데이터 로그 기록
   // PC에서 기준 저장 시 자동으로 사진도 다운로드 (모바일은 📷 버튼 사용)
   if(!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) saveFpPhoto();
@@ -1827,8 +1855,20 @@ function onRefFileSelected(e){
   }
 }
 // ── 이미지에서 기준자세 자동 인식 ─────────────────────────────────────────
-async function setRefFromImage(file){
-  if(!S.det){speak(TX[CL].voice_ref_fail);return;}
+// 사진에서 기준자세: 이름 입력 모달 표시 후 처리
+let _pendingImgFile=null;
+function setRefFromImage(file){
+  _pendingImgFile=file;
+  $('img-name-input').value='';
+  $('img-name-input').classList.remove('required');
+  $('img-name-modal').classList.add('on');
+  setTimeout(()=>$('img-name-input').focus(),200);
+}
+async function _processImgRef(athleteName){
+  const file=_pendingImgFile;
+  _pendingImgFile=null;
+  $('img-name-modal').classList.remove('on');
+  if(!file||!S.det){speak(TX[CL].voice_ref_fail);return;}
   const url=URL.createObjectURL(file);
   const img=new Image();
   img.crossOrigin='anonymous';
@@ -1842,8 +1882,7 @@ async function setRefFromImage(file){
     if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
     S.refs[S.ex.id]=angles;
     localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));
-    const _imgAthlete=($('athlete-name').value||'').trim();
-    saveRefLog(angles,_imgAthlete||'(이름 없음)');
+    saveRefLog(angles,athleteName);
     const succ=$('succ');succ.classList.add('on');
     speak(TX[CL].voice_ref_saved);
     await sleep(1400);succ.classList.remove('on');
@@ -2174,6 +2213,20 @@ async function init(){
   $('data-search').addEventListener('input',e=>renderDataList(e.target.value));
   $('data-modal').addEventListener('click',e=>{if(e.target===$('data-modal'))closeDataModal();});
   $('btn-data-del-all').addEventListener('click',deleteAllData);
+  // 사진 모드 이름 모달
+  $('img-name-confirm').addEventListener('click',()=>{
+    const name=$('img-name-input').value.trim();
+    if(!name){$('img-name-input').classList.add('required');$('img-name-input').focus();
+      setTimeout(()=>$('img-name-input').classList.remove('required'),600);return;}
+    _processImgRef(name);
+  });
+  $('img-name-cancel').addEventListener('click',()=>{
+    $('img-name-modal').classList.remove('on');_pendingImgFile=null;
+  });
+  $('img-name-input').addEventListener('keydown',e=>{
+    if(e.key==='Enter'){$('img-name-confirm').click();}
+    if(e.key==='Escape'){$('img-name-cancel').click();}
+  });
   $('ana-file-input').addEventListener('change',onAnaFileSelected);
   $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));
   $('src-file-btn').addEventListener('click',()=>switchSrcMode('file'));

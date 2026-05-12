@@ -130,21 +130,21 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 
 /* BOTTOM PANEL */
 #btm{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
-  padding:12px 16px 100px;display:flex;flex-direction:column;gap:10px}
+  padding:8px 12px 90px;display:flex;flex-direction:column;gap:6px}
 #btm::-webkit-scrollbar{display:none}
 .sec-lbl{font-size:10px;color:var(--txt3);font-weight:700;
-  letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px}
+  letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px}
 #ex-row{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
 #ex-row::-webkit-scrollbar{display:none}
-.exc{flex-shrink:0;padding:6px 14px;border-radius:16px;
-  border:1px solid var(--border);font-size:13px;color:var(--txt2);
+.exc{flex-shrink:0;padding:4px 10px;border-radius:16px;
+  border:1px solid var(--border);font-size:12px;color:var(--txt2);
   background:var(--card2);cursor:pointer;white-space:nowrap;transition:all .15s;
   position:relative;user-select:none}
 .exc.on{border-color:var(--red);color:var(--txt);background:rgba(229,57,53,.15);font-weight:600}
 .exc .sdot{position:absolute;top:3px;right:3px;width:6px;height:6px;
   border-radius:50%;background:var(--green)}
 #dir-row{display:flex;gap:5px;flex-wrap:wrap}
-.dirbtn{flex:1;min-width:60px;padding:7px 4px;border-radius:10px;
+.dirbtn{flex:1;min-width:60px;padding:5px 4px;border-radius:10px;
   border:1px solid var(--border);background:var(--card2);
   color:var(--txt2);font-size:11px;text-align:center;
   cursor:pointer;transition:all .15s;user-select:none;white-space:nowrap}
@@ -170,11 +170,11 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #btn-ref-file{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--txt2);font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
 #btn-ref-file:active{opacity:.6}
 #src-row{display:flex;gap:8px;margin-top:4px}
-.srctgl{flex:1;padding:9px 6px;border-radius:10px;border:1px solid var(--border);color:var(--txt2);text-align:center;cursor:pointer;font-size:13px;font-weight:600;transition:all .2s;user-select:none;-webkit-user-select:none}
+.srctgl{flex:1;padding:7px 4px;border-radius:10px;border:1px solid var(--border);color:var(--txt2);text-align:center;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s;user-select:none;-webkit-user-select:none}
 .srctgl.on{background:var(--red);color:#fff;border-color:transparent}
 .srctgl:active{opacity:.7}
 #ana-file-label{font-size:11px;color:var(--txt2);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:15px}
-#fb-txt{text-align:center;font-size:13px;color:var(--txt2);min-height:18px;transition:opacity .3s}
+#fb-txt{text-align:center;font-size:12px;color:var(--txt2);min-height:14px;transition:opacity .3s}
 
 /* SUMMARY MODAL */
 #summary{position:fixed;inset:0;background:rgba(0,0,0,.88);
@@ -854,7 +854,7 @@ function doFeedback(cmp,inZone){
     return;
   }
   S.goodN=0;
-  if(now-S.lastFB<3000||S.speak) return;
+  if(now-S.lastFB<1200||S.speak) return;
   const fb=primaryFB(cmp);if(!fb) return;
   const msgs=FBL[fb.key];if(!msgs) return;
   const msg=msgs[fb.st]||msgs.warn;
@@ -1107,6 +1107,8 @@ function updateRepOsc(angles,ref){
       $('rep-badge').classList.add('on');
       _oscLastMinT=now;
       _oscLastMax=p.dev; // reset max tracking from this point
+      // 새 rep 시작 시 피드백 즉시 리셋
+      S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
     }
   }
 }
@@ -1413,14 +1415,15 @@ function saveRecording(){
   const file=new File([blob],fname,{type:saveMime,lastModified:Date.now()});
   if(navigator.canShare&&navigator.canShare({files:[file]})){
     navigator.share({files:[file],title:'APL Motion Coach',text:exName})
-      .catch(err=>{if(err.name!=='AbortError')downloadVideo(blob,fname);});
+      .catch(err=>{if(err.name!=='AbortError')downloadVideo(blob,fname);})
+      .finally(()=>{setTimeout(()=>{if(_srcMode==='camera')checkCameraHealth();},800);});
   }else{downloadVideo(blob,fname);}
 }
 function downloadVideo(blob,fname){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
   a.href=url;a.download=fname;document.body.appendChild(a);a.click();
-  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},3000);
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);if(_srcMode==='camera')checkCameraHealth();},3000);
 }
 
 // ── CAMERA ────────────────────────────────────────────────────────────────────
@@ -1820,6 +1823,15 @@ function setAppHeight(){
   const h=window.innerHeight;
   $('app').style.height=h+'px';
   document.documentElement.style.setProperty('--app-height',h+'px');
+  // cam-wrap = 70% of usable height (below header, above btn-wrap)
+  requestAnimationFrame(()=>{
+    const hdr=document.querySelector('#app header')||document.querySelector('header');
+    const btn=$('btn-wrap');
+    const hdrH=hdr?hdr.offsetHeight:0;
+    const btnH=btn?btn.offsetHeight:0;
+    const camH=Math.floor((h-hdrH-btnH)*0.70);
+    $('cam-wrap').style.height=camH+'px';
+  });
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
@@ -1900,7 +1912,7 @@ async function init(){
       if(document.visibilityState==='visible'){
         // 카메라 모드: 건강 체크 / 파일 모드이고 분석 중 아니면 카메라가 블랙인지 확인
         if(_srcMode==='camera') setTimeout(checkCameraHealth,400);
-        else if(!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
+        else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
       }
     });
     vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera') checkCameraHealth();});

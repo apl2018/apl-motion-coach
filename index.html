@@ -1764,7 +1764,10 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
 
 async function startRecording(){
   if(!S.stream&&_srcMode==='camera') return;
-  S.recChunks=[];
+  // 로컬 클로저로 격리 — 다음 startRecording()의 S.recChunks=[] 초기화와
+  // 이번 세션 onstop 간 레이스 컨디션 방지
+  const _sessionChunks=[];
+  S.recChunks=_sessionChunks;
   // Composite canvas matches exact video resolution — no scaling issues
   const cw=vid.videoWidth||$('cam-wrap').offsetWidth||720;
   const ch=vid.videoHeight||$('cam-wrap').offsetHeight||960;
@@ -1871,8 +1874,8 @@ async function startRecording(){
   try{S.recorder=new MediaRecorder(compStream,{mimeType:mime,videoBitsPerSecond:12000000,audioBitsPerSecond:192000});}
   catch(e){try{S.recorder=new MediaRecorder(compStream,{videoBitsPerSecond:8000000});}
            catch(e2){S.recorder=new MediaRecorder(compStream);}}
-  S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)S.recChunks.push(e.data);};
-  S.recorder.onstop=saveRecording;
+  S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)_sessionChunks.push(e.data);};
+  S.recorder.onstop=()=>saveRecording(_sessionChunks);
 
   // Pre-draw current video frame so canvas is never empty when recording starts
   try{compCtx.drawImage(vid,0,0,cw,ch);drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
@@ -1910,7 +1913,7 @@ function stopRecording(){
   $('rec-dot').classList.remove('on');$('rec-time').classList.remove('on');
   if(S.recorder){
     if(S.recorder.state==='recording'||S.recorder.state==='paused')S.recorder.stop();
-    else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording();
+    else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording(S.recChunks);
   }
   if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;}
   // recorder.stop() → saveRecording 완료 후 AudioContext 닫기
@@ -1918,13 +1921,13 @@ function stopRecording(){
     if(_recAudioCtx){_recAudioCtx.close().catch(()=>{});_recAudioCtx=null;_recAudioDest=null;}
   },800);
 }
-function saveRecording(){
-  if(!S.recChunks.length) return;
+function saveRecording(chunks){
+  if(!chunks||!chunks.length) return;
   const recMime=S.recorder&&S.recorder.mimeType?S.recorder.mimeType:'video/mp4';
   const isMP4=recMime.includes('mp4');
   const ext=isMP4?'mp4':'webm';
   const saveMime=isMP4?'video/mp4':'video/webm';
-  const blob=new Blob(S.recChunks,{type:saveMime});
+  const blob=new Blob(chunks,{type:saveMime});
   const now=new Date();
   const stamp=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
   const exName=S.ex.name;

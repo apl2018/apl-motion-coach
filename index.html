@@ -227,6 +227,10 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 .data-row-name{font-size:13px;font-weight:700;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .data-row-sub{font-size:11px;color:var(--txt3);margin-top:2px}
 .data-row-actions{display:flex;flex-direction:column;gap:4px;flex-shrink:0}
+.data-row-thumb{width:52px;height:52px;object-fit:cover;border-radius:6px;
+  flex-shrink:0;background:#222;cursor:pointer;border:1px solid rgba(255,255,255,.15)}
+.data-row-imgdl{padding:4px 6px;border-radius:6px;font-size:12px;
+  background:rgba(33,150,243,.15);border:1px solid rgba(33,150,243,.4);color:#90CAF9;cursor:pointer}
 .data-row-copy,.data-row-del{padding:5px 8px;border-radius:6px;
   border:1px solid var(--border);font-size:13px;cursor:pointer;white-space:nowrap}
 .data-row-copy{background:transparent;color:var(--txt2)}
@@ -336,6 +340,15 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
   background:var(--green);color:#fff;font-size:14px;font-weight:700;cursor:pointer}
 #fp-save:disabled{background:rgba(255,255,255,.1);color:var(--txt3);cursor:not-allowed}
 #fp-save:active:not(:disabled){opacity:.8}
+/* Joint selection */
+#joint-sel-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.jsel{display:flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
+  cursor:pointer;font-size:11px;color:var(--txt2);user-select:none;transition:all .2s}
+.jsel input{display:none}
+.jsel.active{background:rgba(33,150,243,.25);border-color:#2196F3;color:#fff}
+.jsel .jdot{width:8px;height:8px;border-radius:50%;background:#555;flex-shrink:0}
+.jsel.active .jdot{background:#2196F3}
 </style>
 </head>
 <body>
@@ -461,6 +474,15 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
       <div id="ana-file-label"></div>
     </div>
 
+    <div>
+      <div class="sec-lbl">분석 관절 선택</div>
+      <div id="joint-sel-row">
+        <label class="jsel active" id="jsel-knee"><input type="checkbox" checked><div class="jdot"></div>무릎</label>
+        <label class="jsel active" id="jsel-hip"><input type="checkbox" checked><div class="jdot"></div>고관절</label>
+        <label class="jsel active" id="jsel-trunk"><input type="checkbox" checked><div class="jdot"></div>몸통</label>
+        <label class="jsel active" id="jsel-spine"><input type="checkbox" checked><div class="jdot"></div>척추</label>
+      </div>
+    </div>
     <div id="ref-card">
       <div id="ref-info">
         <div id="ref-ttl">기준 자세 없음</div>
@@ -799,6 +821,7 @@ const S={
   recorder:null,recChunks:[],recTimer:null,recSec:0,
   drawCompInterval:null,audioStream:null,compCanvas:null,
   inZone:false,repCount:0,startTime:0,stats:null,fbLog:{},
+  jointSel:{knee:true,hip:true,trunk:true,spine:true},
 };
 function freshStats(){
   return{zoneFrames:0,totalFrames:0,
@@ -847,12 +870,14 @@ function compare(curr,ref,ex){
   return out;
 }
 function overall(cmp){
-  const v=Object.values(cmp).map(x=>x.st);
+  const v=Object.entries(cmp).filter(([k])=>S.jointSel[k]).map(([,x])=>x.st);
+  if(!v.length) return 'good';
   return v.includes('crit')?'crit':v.includes('warn')?'warn':'good';
 }
 function primaryFB(cmp){
   let worst=null,wabs=0;
   for(const[k,c]of Object.entries(cmp)){
+    if(!S.jointSel[k]) continue; // skip deselected joints
     if(c.st==='good'||c.st==='unk') continue;
     if(Math.abs(c.dev)>wabs){worst={k,...c};wabs=Math.abs(c.dev);}
   }
@@ -866,6 +891,7 @@ function isPoseInZone(angles,ref){
   if(!ref) return false;
   let sum=0,cnt=0;
   for(const k of ['knee','hip','trunk','spine']){
+    if(!S.jointSel[k]) continue;
     const cur=angles[k],rv=ref[k];
     if(cur===null||rv===null||rv===undefined) continue;
     sum+=Math.abs(cur-rv);cnt++;
@@ -950,6 +976,8 @@ function drawFrame(kps,cmp){
 function updateAnglesBar(cmp,rawAngles){
   for(const k of ['knee','hip','trunk','spine']){
     const el=$('ai-'+k);if(!el) continue;
+    const sel=S.jointSel[k];
+    el.style.opacity=sel?'1':'0.3';
     const dot=el.querySelector('.aidot'),val=el.querySelector('.aival');
     if(!cmp){
       const rv=rawAngles?rawAngles[k]:null;
@@ -957,7 +985,7 @@ function updateAnglesBar(cmp,rawAngles){
     }else{
       const c=cmp[k];
       if(!c||c.cur===null){dot.style.background='#444';val.textContent='--°';val.style.color='#fff';}
-      else{dot.style.background=ST_COL[c.st]||'#2196F3';val.textContent=c.cur+'°';val.style.color=ST_COL[c.st];}
+      else{dot.style.background=sel?(ST_COL[c.st]||'#2196F3'):'#555';val.textContent=c.cur+'°';val.style.color=sel?(ST_COL[c.st]||'#fff'):'#777';}
     }
   }
 }
@@ -979,57 +1007,69 @@ function doFeedback(cmp,inZone){
   speak(msg);S.lastFB=now;S.fbLog[msg]=(S.fbLog[msg]||0)+1;
 }
 // ── DETECTION LOOP ───────────────────────────────────────────────────────────
-let _lastDet=0;
-const DET_MS=80; // fast detection for smooth skeleton
-async function loop(){
-  if(!S.live) return;
-  const now=Date.now();
-  if(now-_lastDet>=DET_MS&&vid.readyState>=2){
-    _lastDet=now;
-    try{
-      const isUser=_srcMode==='camera'&&S.facingMode==='user';
-      const poses=await S.det.estimatePoses(vid,{maxPoses:1,flipHorizontal:isUser});
-      if(!poses||!poses.length){
-        $('no-det').classList.add('on');$('chip').className='';
-        ctx.clearRect(0,0,cvs.width,cvs.height);
-      }else{
-        $('no-det').classList.remove('on');
-        const kps=poses[0].keypoints;
-        _prevKps=_lastKps;_prevKpsTs=_kpsTs;
-        _lastKps=kps;_kpsTs=Date.now();
-        const angles=extractAngles(kps);
-        const ref=S.refs[S.ex.id]||null;
-        const cmp=ref?compare(angles,ref,S.ex):null;
-        _lastCmp=cmp;
-        const ov=cmp?overall(cmp):'unk';
-        const inZone=isPoseInZone(angles,ref);
-        const L=TX[CL];
-        const zb=$('zone-badge');zb.classList.add('on');
-        if(inZone){zb.className='on in';zb.textContent=L.zone_in;}
-        else{zb.className='on out';zb.textContent=L.zone_out;}
-        // Oscillation-based rep counting: detect each closest-approach to reference
-        if(ref) updateRepOsc(angles,ref);
-        S.inZone=inZone;
-        if(S.stats&&inZone&&cmp){
-          S.stats.zoneFrames++;
-          for(const k of ['knee','hip','trunk','spine']){
-            const c=cmp[k];if(!c||c.st==='unk') continue;
-            if(c.st==='good')S.stats.joints[k].g++;
-            else if(c.st==='warn')S.stats.joints[k].w++;
-            else S.stats.joints[k].c++;
-          }
+let _lastDet=0,_detPending=false;
+const DET_MS=40; // target ~25fps detection (MoveNet latency ~20-40ms)
+async function _runDetection(){
+  if(!S.live||!S.det) return;
+  try{
+    const isUser=_srcMode==='camera'&&S.facingMode==='user';
+    const poses=await S.det.estimatePoses(vid,{maxPoses:1,flipHorizontal:isUser});
+    if(!poses||!poses.length){
+      $('no-det').classList.add('on');$('chip').className='';
+      _lastKps=null;_lastCmp=null;_lastAngles=null;
+    }else{
+      $('no-det').classList.remove('on');
+      const kps=poses[0].keypoints;
+      _prevKps=_lastKps;_prevKpsTs=_kpsTs;
+      _lastKps=kps;_kpsTs=Date.now();
+      const angles=extractAngles(kps);
+      _lastAngles=angles;
+      const ref=S.refs[S.ex.id]||null;
+      const cmp=ref?compare(angles,ref,S.ex):null;
+      _lastCmp=cmp;
+      const ov=cmp?overall(cmp):'unk';
+      const inZone=isPoseInZone(angles,ref);
+      const L=TX[CL];
+      const zb=$('zone-badge');zb.classList.add('on');
+      if(inZone){zb.className='on in';zb.textContent=L.zone_in;}
+      else{zb.className='on out';zb.textContent=L.zone_out;}
+      if(ref) updateRepOsc(angles,ref);
+      S.inZone=inZone;
+      if(S.stats&&inZone&&cmp){
+        S.stats.zoneFrames++;
+        for(const k of ['knee','hip','trunk','spine']){
+          if(!S.jointSel[k]) continue;
+          const c=cmp[k];if(!c||c.st==='unk') continue;
+          if(c.st==='good')S.stats.joints[k].g++;
+          else if(c.st==='warn')S.stats.joints[k].w++;
+          else S.stats.joints[k].c++;
         }
-        if(S.stats) S.stats.totalFrames++;
-        const chip=$('chip');
-        if(inZone){
-          chip.className=ov;
-          chip.textContent=ov==='good'?L.chip_good:ov==='warn'?L.chip_warn:L.chip_crit;
-        }else{chip.className='';}
-        drawFrame(kps,cmp);
-        updateAnglesBar(cmp,angles);
-        if(cmp) doFeedback(cmp,inZone);
       }
-    }catch(e){console.warn(e);}
+      if(S.stats) S.stats.totalFrames++;
+      const chip=$('chip');
+      if(inZone){
+        chip.className=ov;
+        chip.textContent=ov==='good'?L.chip_good:ov==='warn'?L.chip_warn:L.chip_crit;
+      }else{chip.className='';}
+      if(cmp) doFeedback(cmp,inZone);
+    }
+  }catch(e){console.warn(e);}
+  _detPending=false;
+}
+function loop(){
+  if(!S.live) return;
+  // ① Draw skeleton every frame at 60fps using cached keypoints → smooth even during fast moves
+  if(_lastKps){
+    drawFrame(_lastKps,_lastCmp);
+    updateAnglesBar(_lastCmp,_lastAngles);
+  }else if(!_detPending){
+    ctx.clearRect(0,0,cvs.width,cvs.height);
+  }
+  // ② Trigger async detection at DET_MS rate without blocking rAF
+  const now=Date.now();
+  if(!_detPending&&now-_lastDet>=DET_MS&&vid.readyState>=2){
+    _lastDet=now;_detPending=true;
+    _runDetection(); // async — does not await here → rAF keeps running at 60fps
   }
   if(S.live){
     if(_srcMode==='file'&&(vid.ended||vid.paused&&vid.currentTime>=vid.duration-0.1)){stopLive();return;}
@@ -1200,7 +1240,8 @@ async function saveRefFrame(){
     $('btn-main').disabled=false;
     return; // 이름 없으면 저장 중단
   }
-  saveRefLog(angles,_athleteName); // 데이터 로그 기록
+  const _refThumb=_captureThumbnail($('fp-vid'));
+  saveRefLog(angles,_athleteName,_refThumb); // 데이터 로그 기록
   // PC에서 기준 저장 시 자동으로 사진도 다운로드 (모바일은 📷 버튼 사용)
   if(!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) saveFpPhoto();
   const succ=$('succ');succ.classList.add('on');
@@ -1210,7 +1251,20 @@ async function saveRefFrame(){
   $('btn-main').disabled=false;
 }
 // ── 기준자세 로그 저장 ──────────────────────────────────────────────────────
-function saveRefLog(angles,name){
+// capture canvas/image as tiny base64 JPEG (120px wide, quality 0.55)
+function _captureThumbnail(sourceEl,maxW=120){
+  try{
+    const fc=document.createElement('canvas');
+    const sw=sourceEl.videoWidth||sourceEl.naturalWidth||sourceEl.width||0;
+    const sh=sourceEl.videoHeight||sourceEl.naturalHeight||sourceEl.height||0;
+    if(!sw||!sh) return null;
+    const scale=Math.min(1,maxW/sw);
+    fc.width=Math.round(sw*scale);fc.height=Math.round(sh*scale);
+    fc.getContext('2d').drawImage(sourceEl,0,0,fc.width,fc.height);
+    return fc.toDataURL('image/jpeg',0.55); // ~5-8KB
+  }catch(e){return null;}
+}
+function saveRefLog(angles,name,imgDataUrl){
   name=(name||"").trim()||"(이름 없음)";
   const entry={
     name,
@@ -1223,6 +1277,7 @@ function saveRefLog(angles,name){
     spine:angles.spine!==null?Math.round(angles.spine*10)/10:null,
     at:new Date().toISOString()
   };
+  if(imgDataUrl) entry.img=imgDataUrl; // optional photo thumbnail
   try{
     const log=JSON.parse(localStorage.getItem("apl_ref_log")||"[]");
     log.unshift(entry); // 최신순
@@ -1259,7 +1314,9 @@ function renderDataList(q){
     const dirLabel={left:"왼쪽",right:"오른쪽",front:"정면",back:"후면"}[e.dir]||e.dir;
     const row=document.createElement("div");
     row.className="data-row";
+    const thumbHtml=e.img?`<img class="data-row-thumb" src="${e.img}" title="기준자세 사진 (클릭하면 저장)">`:'';
     row.innerHTML=`
+      ${thumbHtml?`<div style="flex-shrink:0">${thumbHtml}</div>`:''}
       <div class="data-row-info">
         <div class="data-row-name">${e.name}</div>
         <div class="data-row-sub">${e.exName} · ${dirLabel} · ${dt}</div>
@@ -1268,10 +1325,16 @@ function renderDataList(q){
         </div>
       </div>
       <div class="data-row-actions">
+        ${e.img?`<button class="data-row-imgdl" title="사진 저장">📥</button>`:''}
         <button class="data-row-copy">📋</button>
         <button class="data-row-del">🗑️</button>
       </div>
     `;
+    if(e.img){
+      const saveImg=()=>{const a=document.createElement('a');a.href=e.img;a.download=`APL_${e.name}_${e.exName}.jpg`;document.body.appendChild(a);a.click();setTimeout(()=>document.body.removeChild(a),500);};
+      row.querySelector(".data-row-thumb").addEventListener("click",saveImg);
+      row.querySelector(".data-row-imgdl").addEventListener("click",saveImg);
+    }
     row.querySelector(".data-row-copy").addEventListener("click",()=>copyDataRow(e));
     row.querySelector(".data-row-del").addEventListener("click",()=>deleteDataRow(e.at));
     list.appendChild(row);
@@ -1281,7 +1344,8 @@ function copyDataRow(e){
   const d=new Date(e.at);
   const dt=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const dirLabel={left:"왼쪽",right:"오른쪽",front:"정면",back:"후면"}[e.dir]||e.dir;
-  const row=[e.name,e.exName,dirLabel,e.knee??""  ,e.hip??"",e.trunk??"",e.spine??"",dt].join("\t");
+  const photoCol=e.img?"(사진있음)":"";
+  const row=[e.name,e.exName,dirLabel,e.knee??"",e.hip??"",e.trunk??"",e.spine??"",dt,photoCol].join("\t");
   navigator.clipboard.writeText(row).then(()=>{
     // 복사 완료 피드백
     $("data-count").textContent="✅ 복사됨!";
@@ -1319,12 +1383,12 @@ function copyAllData(){
   const q=$("data-search").value.trim().toLowerCase();
   const filtered=q?log.filter(e=>e.name.toLowerCase().includes(q)):log;
   if(!filtered.length) return;
-  const header="선수명\t운동명\t촬영방향\t무릎(°)\t고관절(°)\t몸통(°)\t척추(°)\t날짜";
+  const header="선수명\t운동명\t촬영방향\t무릎(°)\t고관절(°)\t몸통(°)\t척추(°)\t날짜\t사진";
   const rows=filtered.map(e=>{
     const d=new Date(e.at);
     const dt=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
     const dirLabel={left:"왼쪽",right:"오른쪽",front:"정면",back:"후면"}[e.dir]||e.dir;
-    return [e.name,e.exName,dirLabel,e.knee??"",e.hip??"",e.trunk??"",e.spine??"",dt].join("\t");
+    return [e.name,e.exName,dirLabel,e.knee??"",e.hip??"",e.trunk??"",e.spine??"",dt,e.img?"(사진있음)":""].join("\t");
   });
   const tsv=[header,...rows].join("\n");
   navigator.clipboard.writeText(tsv).then(()=>{
@@ -1358,6 +1422,7 @@ function getAvgDev(angles,ref){
   if(!ref) return null;
   let sum=0,cnt=0;
   for(const k of ['knee','hip','trunk','spine']){
+    if(!S.jointSel[k]) continue;
     const c=angles[k],r=ref[k];
     if(c===null||r===null||r===undefined) continue;
     sum+=Math.abs(c-r);cnt++;
@@ -1406,7 +1471,7 @@ function resetRepOsc(){
 
 // ── RECORDING ─────────────────────────────────────────────────────────────────
 let _compDrawing=false;
-let _lastKps=null,_lastCmp=null;
+let _lastKps=null,_lastCmp=null,_lastAngles=null;
 let _prevKps=null,_kpsTs=0,_prevKpsTs=0; // for skeleton interpolation
 let _coachOverlay=null; // {text, until}
 let _introUntil=0;     // epoch ms — show APL logo intro until this time
@@ -1740,8 +1805,8 @@ async function switchCamera(){
   // Try to get new stream BEFORE stopping old one (so we keep video during transition)
   let newStream=null;
   const tries=[
-    {video:{facingMode:{exact:newMode},width:{ideal:1280},height:{ideal:720}},audio:false},
-    {video:{facingMode:{ideal:newMode},width:{ideal:1280},height:{ideal:720}},audio:false},
+    {video:{facingMode:{exact:newMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false},
+    {video:{facingMode:{ideal:newMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false},
     {video:{facingMode:newMode},audio:false},
   ];
   for(const c of tries){
@@ -1882,7 +1947,8 @@ async function _processImgRef(athleteName){
     if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
     S.refs[S.ex.id]=angles;
     localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));
-    saveRefLog(angles,athleteName);
+    const _imgThumb=_captureThumbnail(img);
+    saveRefLog(angles,athleteName,_imgThumb);
     const succ=$('succ');succ.classList.add('on');
     speak(TX[CL].voice_ref_saved);
     await sleep(1400);succ.classList.remove('on');
@@ -2016,7 +2082,8 @@ function showSummary(elapsed){
   $('sum-title').textContent=exName+L.sum_title;
   $('sum-sub').textContent=CL==='ko'?`총 ${m}:${s}  ·  ${S.repCount}회 수행`:`${m}:${s}  ·  ${S.repCount} ${L.rep_lbl}`;
   let totalG=0,totalAll=0;
-  for(const k of ['knee','hip','trunk','spine']){
+  const selKeys=['knee','hip','trunk','spine'].filter(k=>S.jointSel[k]);
+  for(const k of selKeys){
     const j=st.joints[k];totalG+=j.g;totalAll+=j.g+j.w+j.c;
   }
   const pct=totalAll>0?Math.round(totalG/totalAll*100):0;
@@ -2027,7 +2094,7 @@ function showSummary(elapsed){
   $('sum-joints-lbl').textContent=L.sum_joints_title;
   const jlbls={knee:L.joint_knee,hip:L.joint_hip,trunk:L.joint_trunk,spine:L.joint_spine};
   const bars=$('sum-bars');bars.innerHTML='';
-  for(const k of ['knee','hip','trunk','spine']){
+  for(const k of selKeys){
     const j=st.joints[k],tot=j.g+j.w+j.c||1;
     const gp=Math.round(j.g/tot*100),wp=Math.round(j.w/tot*100),cp=100-gp-wp;
     const div=document.createElement('div');div.className='bar-row';
@@ -2119,7 +2186,7 @@ async function restartCamera(){
   try{
     if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
     const stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:S.facingMode},width:{ideal:1280},height:{ideal:720}},audio:false});
+      video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false});
     S.stream=stream;vid.srcObject=stream;
     vid.load();
     await waitForVideo(3000);
@@ -2210,6 +2277,21 @@ async function init(){
   $('btn-data-open').addEventListener('click',openDataModal);
   $('btn-data-close').addEventListener('click',closeDataModal);
   $('btn-data-copy-all').addEventListener('click',copyAllData);
+  // Joint selection
+  for(const k of ['knee','hip','trunk','spine']){
+    const lbl=$('jsel-'+k);if(!lbl) continue;
+    const cb=lbl.querySelector('input');
+    lbl.addEventListener('click',e=>{
+      // toggle
+      const nowChecked=!S.jointSel[k];
+      // require at least 1 joint selected
+      const otherSel=['knee','hip','trunk','spine'].filter(j=>j!==k&&S.jointSel[j]);
+      if(!nowChecked&&!otherSel.length) return; // prevent deselecting all
+      S.jointSel[k]=nowChecked;
+      cb.checked=nowChecked;
+      lbl.classList.toggle('active',nowChecked);
+    });
+  }
   $('data-search').addEventListener('input',e=>renderDataList(e.target.value));
   $('data-modal').addEventListener('click',e=>{if(e.target===$('data-modal'))closeDataModal();});
   $('btn-data-del-all').addEventListener('click',deleteAllData);
@@ -2272,7 +2354,7 @@ async function init(){
   $('i-msg').textContent='카메라 시작 중...';
   try{
     const stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
+      video:{facingMode:{ideal:'environment'},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false});
     S.stream=stream;vid.srcObject=stream;
     await new Promise(r=>{vid.onloadedmetadata=r;});
     vid.play();resizeCam();

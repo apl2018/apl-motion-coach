@@ -1124,22 +1124,38 @@ function updateAnglesBar(cmp,rawAngles){
     }
   }
 }
+// Zone-entry feedback globals
+let _zoneEntryAt=0;       // timestamp of last false->true zone transition
+let _zoneEntryFbGiven=false; // whether feedback was given for this zone entry
+const _MIN_FB_GAP=3000;   // minimum ms between any feedbacks
+
 function doFeedback(cmp,inZone){
-  if(!inZone) return;
   const now=Date.now(),ov=overall(cmp),PR=TX[CL].PRAISE,FBL=TX[CL].FB;
+
+  if(!inZone) return;  // out of zone: no feedback
+
+  // Praise: only on zone entry, after 400ms confirmation, good pose, no recent praise
   if(ov==='good'){
     S.goodN++;
-    if(S.goodN>=12&&now-S.lastPr>9000&&!S.speak){
-      speak(PR[Math.floor(Math.random()*PR.length)]);S.lastPr=now;S.goodN=0;
+    if(S.goodN>=8&&!_zoneEntryFbGiven&&now-_zoneEntryAt>400&&now-S.lastPr>8000&&!S.speak){
+      speak(PR[Math.floor(Math.random()*PR.length)]);
+      S.lastPr=now;S.goodN=0;_zoneEntryFbGiven=true;
     }
     return;
   }
   S.goodN=0;
-  if(now-S.lastFB<1200||S.speak) return;
+
+  // Corrective feedback: only once per zone entry, after 400ms confirmation, min gap 3s
+  if(_zoneEntryFbGiven) return;
+  if(now-_zoneEntryAt<400) return;       // wait for pose to stabilize
+  if(now-S.lastFB<_MIN_FB_GAP) return;  // respect minimum gap
+  if(S.speak) return;                    // don't interrupt ongoing speech
+
   const fb=primaryFB(cmp);if(!fb) return;
   const msgs=FBL[fb.key];if(!msgs) return;
   const msg=msgs[fb.st]||msgs.warn;
-  speak(msg);S.lastFB=now;S.fbLog[msg]=(S.fbLog[msg]||0)+1;
+  speak(msg);S.lastFB=now;_zoneEntryFbGiven=true;
+  S.fbLog[msg]=(S.fbLog[msg]||0)+1;
 }
 // ── DETECTION LOOP ───────────────────────────────────────────────────────────
 let _lastDet=0,_detPending=false;
@@ -1177,6 +1193,8 @@ async function _runDetection(){
       if(inZone){zb.className='on in';zb.textContent=L.zone_in;}
       else{zb.className='on out';zb.textContent=L.zone_out;}
       if(ref) updateRepOsc(angles,ref);
+      // Zone-entry transition detection: must happen BEFORE S.inZone is updated
+      if(inZone && !S.inZone){ _zoneEntryAt=Date.now(); _zoneEntryFbGiven=false; }
       S.inZone=inZone;
       if(S.stats&&inZone&&cmp){
         S.stats.zoneFrames++;
@@ -1197,9 +1215,9 @@ async function _runDetection(){
       if(isFrontal()&&_lastPosCmp){
         // position-mode feedback
         const now2=Date.now();
-        if(!posAllGood(_lastPosCmp)&&now2-S.lastFB>1400&&!S.speak){
+        if(!posAllGood(_lastPosCmp)&&!_zoneEntryFbGiven&&now2-_zoneEntryAt>400&&now2-S.lastFB>_MIN_FB_GAP&&!S.speak){
           const fb=posFeedbackStr(_lastPosCmp);
-          if(fb){speak(fb);S.lastFB=now2;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
+          if(fb){speak(fb);S.lastFB=now2;_zoneEntryFbGiven=true;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
         }
       } else if(cmp) doFeedback(cmp,inZone);
     }
@@ -2204,6 +2222,7 @@ async function startLive(){
     cdown.classList.remove('on');cnum.style.color='#fff';
   }
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
+  _zoneEntryAt=0;_zoneEntryFbGiven=false;
   resetRepOsc();
   $('rep-num').textContent='0';
   S.live=true;S.lastFB=0;S.lastPr=0;S.goodN=0;S.speak=false;
@@ -2686,28 +2705,29 @@ function drawPosOverlay(kps, pos){
   drawKneeLine(rHip,rKnee,rAnk,'R');
 }
 
-// Camera live recovery (used when visibilitychange fires during analysis)
-async function _recoverCameraLive(){
-  if(_srcMode!=='camera'||_camBusy) return;
-  const tracks = S.stream ? S.stream.getVideoTracks() : [];
-  const dead = !tracks.length || tracks.every(t=>t.readyState==='ended');
-  const stuck = vid.readyState<2 || vid.paused;
-  if(!dead&&!stuck) return; // camera is fine
-  _camBusy = true;
-  const wasLive = S.live;
+// Force camera restart — always stops existing tracks and gets fresh stream.
+// Called on visibilitychange (iOS: tracks stay 'live' but deliver black frames).
+async function _forceCameraRestart(){
+  if(_srcMode!=='camera'||_camBusy||S.caps) return;
+  _camBusy=true;
+  const wasLive=S.live;
   try{
+    // Stop all existing tracks unconditionally
     if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
-    const stream = await navigator.mediaDevices.getUserMedia({
+    S.stream=null; vid.srcObject=null;
+    // Short pause so iOS camera hardware fully releases
+    await new Promise(r=>setTimeout(r,200));
+    const stream=await navigator.mediaDevices.getUserMedia({
       video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},
       audio:false});
     S.stream=stream; vid.srcObject=stream; vid.load();
     await waitForVideo(3000);
     await vid.play().catch(()=>{});
-    vid.style.transform = S.facingMode==='user'?'scaleX(-1)':'';
-    cvs.style.transform = S.facingMode==='user'?'scaleX(-1)':'';
+    vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
+    cvs.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
     resizeCam();
-    if(wasLive && !S.raf){ S.raf=requestAnimationFrame(loop); }
-  }catch(e){console.error('Camera live recovery failed:',e);}
+    if(wasLive&&!S.raf){S.raf=requestAnimationFrame(loop);}
+  }catch(e){console.error('Force camera restart failed:',e);}
   finally{_camBusy=false;}
 }
 
@@ -2839,14 +2859,20 @@ async function init(){
     setAppHeight();
     window.addEventListener('resize',()=>{setAppHeight();resizeCam();});
     vid.addEventListener('loadeddata',resizeCam);
-    // Auto-recover camera when app returns to foreground (e.g. after sharing video)
+    // Force camera restart whenever app returns to foreground (iOS black-frame fix)
     document.addEventListener('visibilitychange',()=>{
       if(document.visibilityState==='visible'){
-        // 레이아웃 즉시 복원 후 카메라 상태 점검
         setAppHeight();
         if(_srcMode==='camera'){
-          setTimeout(()=>{ if(S.live) _recoverCameraLive(); else checkCameraHealth(); },400);
+          // Always force-restart: iOS returns black frames even when track appears live
+          setTimeout(()=>{ if(!S.caps) _forceCameraRestart(); },400);
         } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
+      }
+    });
+    // iOS bfcache: pageshow with persisted=true means page restored from cache
+    window.addEventListener('pageshow',e=>{
+      if(e.persisted&&_srcMode==='camera'){
+        setTimeout(()=>{ if(!S.caps) _forceCameraRestart(); },400);
       }
     });
     vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera') checkCameraHealth();});
@@ -2882,14 +2908,4 @@ async function init(){
     $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
     $('init').classList.add('gone');
     const rb=document.createElement('div');
-    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
-    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
-    document.body.appendChild(rb);
-  }
-  speechSynthesis.getVoices();
-}
-
-window.addEventListener('load',init);
-</script>
-</body>
-</html>
+    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700

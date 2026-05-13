@@ -51,6 +51,27 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #prm-confirm:active,#prm-cancel:active{opacity:.7}
 #prm-free-note{font-size:11px;color:rgba(255,255,255,.25);text-align:center;line-height:1.5}
 
+/* POSITION MODE */
+#pos-bar{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.82);
+  display:none;flex-direction:column;gap:5px;padding:8px 12px 10px}
+#pos-bar.on{display:flex}
+.pm-row{display:flex;align-items:center;gap:8px}
+.pm-lbl{font-size:10px;color:rgba(255,255,255,.5);width:56px;flex-shrink:0;line-height:1.2}
+.pm-track{flex:1;height:6px;background:rgba(255,255,255,.12);border-radius:3px;position:relative;overflow:visible}
+.pm-thumb{position:absolute;top:50%;width:12px;height:12px;border-radius:50%;
+  background:#2196F3;transform:translate(-50%,-50%);transition:left .12s,background .2s}
+.pm-refline{position:absolute;top:-3px;width:2px;height:12px;background:rgba(255,255,255,.45);
+  transform:translateX(-50%);display:none}
+.pm-val{font-size:11px;font-weight:700;color:#fff;width:32px;text-align:right;flex-shrink:0}
+.pm-lr{display:flex;gap:6px;flex:1}
+.pm-half{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px}
+.pm-sub{font-size:9px;color:rgba(255,255,255,.38);line-height:1}
+.pm-num{font-size:13px;font-weight:800;color:#fff;line-height:1.2}
+/* TRAJ GRAPH */
+#traj-wrap{display:none;padding:6px 12px 2px;background:rgba(0,0,0,.18);border-radius:8px;margin-top:2px}
+#traj-wrap.on{display:block}
+#traj-lbl{font-size:9px;color:rgba(255,255,255,.3);margin-bottom:3px}
+#traj-cvs{width:100%;height:48px;display:block;border-radius:5px;background:rgba(255,255,255,.03)}
 /* INIT OVERLAY */
 #init{position:fixed;inset:0;background:var(--bg);display:flex;
   flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:200}
@@ -454,6 +475,38 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
       <div class="ai" id="ai-shoulder"><div class="aidot"></div><span class="ailbl">어깨</span><span class="aival">--°</span></div>
       <div class="ai" id="ai-elbow"><div class="aidot"></div><span class="ailbl">팔꿈치</span><span class="aival">--°</span></div>
     </div>
+    <!-- Position mode bar (front/back view) -->
+    <div id="pos-bar">
+      <div class="pm-row">
+        <span class="pm-lbl">골반 이동</span>
+        <div class="pm-track">
+          <div class="pm-refline" id="pr-hip"></div>
+          <div class="pm-thumb" id="pt-hip" style="left:50%"></div>
+        </div>
+        <span class="pm-val" id="pv-hip">--</span>
+      </div>
+      <div class="pm-row">
+        <span class="pm-lbl">골반 기울기</span>
+        <div class="pm-track">
+          <div class="pm-refline" id="pr-pel"></div>
+          <div class="pm-thumb" id="pt-pel" style="left:50%"></div>
+        </div>
+        <span class="pm-val" id="pv-pel">--</span>
+      </div>
+      <div class="pm-row">
+        <span class="pm-lbl">무릎 정렬</span>
+        <div class="pm-lr">
+          <div class="pm-half">
+            <span class="pm-sub">좌</span>
+            <span class="pm-num" id="pv-lk">--</span>
+          </div>
+          <div class="pm-half">
+            <span class="pm-sub">우</span>
+            <span class="pm-num" id="pv-rk">--</span>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="cdown"><div id="cnum">5</div></div>
     <div id="succ"><span>✓</span></div>
     <div id="rec-dot"></div>
@@ -515,6 +568,11 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         <label class="jsel active" id="jsel-shoulder"><input type="checkbox" checked><div class="jdot"></div>어깨</label>
         <label class="jsel active" id="jsel-elbow"><input type="checkbox" checked><div class="jdot"></div>팔꿈치</label>
       </div>
+    </div>
+    <!-- Trajectory graph (frontal mode) -->
+    <div id="traj-wrap">
+      <div id="traj-lbl">골반 이동 궤적 (8초)</div>
+      <canvas id="traj-cvs" height="48"></canvas>
     </div>
     <div id="ref-card">
       <div id="ref-info">
@@ -1026,6 +1084,7 @@ function drawFrame(kps,cmp){
     ctx.fillStyle=kpColor(i,cmp);ctx.fill();
     ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
   }
+  if(isFrontal()&&_lastPos) drawPosOverlay(kps,_lastPos);
   if(cmp){
     // offset: +x/+y means right/down from keypoint
     const lblMap=[
@@ -1046,6 +1105,10 @@ function drawFrame(kps,cmp){
   }
 }
 function updateAnglesBar(cmp,rawAngles){
+  if(isFrontal()){
+    updatePosBar(_lastPos,_lastPosCmp);
+    return; // skip angle bar in frontal mode
+  }
   for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     const el=$('ai-'+k);if(!el) continue;
     const sel=S.jointSel[k];
@@ -1094,6 +1157,14 @@ async function _runDetection(){
       const kps=poses[0].keypoints;
       _prevKps=_lastKps;_prevKpsTs=_kpsTs;
       _lastKps=kps;_kpsTs=Date.now();
+      // Frontal mode: position analysis
+      if(isFrontal()){
+        const pos=extractPositions(kps);
+        _lastPos=pos;
+        const posRef=_posRef[S.ex.id]||null;
+        _lastPosCmp=posRef?comparePos(pos,posRef):null;
+        if(pos) pushPosHistory(pos);
+      } else { _lastPos=null; _lastPosCmp=null; }
       const angles=extractAngles(kps);
       _lastAngles=angles;
       const ref=S.refs[S.ex.id]||null;
@@ -1123,7 +1194,14 @@ async function _runDetection(){
         chip.className=ov;
         chip.textContent=ov==='good'?L.chip_good:ov==='warn'?L.chip_warn:L.chip_crit;
       }else{chip.className='';}
-      if(cmp) doFeedback(cmp,inZone);
+      if(isFrontal()&&_lastPosCmp){
+        // position-mode feedback
+        const now2=Date.now();
+        if(!posAllGood(_lastPosCmp)&&now2-S.lastFB>1400&&!S.speak){
+          const fb=posFeedbackStr(_lastPosCmp);
+          if(fb){speak(fb);S.lastFB=now2;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
+        }
+      } else if(cmp) doFeedback(cmp,inZone);
     }
   }catch(e){console.warn(e);}
   _detPending=false;
@@ -1134,6 +1212,7 @@ function loop(){
   if(_lastKps){
     drawFrame(_lastKps,_lastCmp);
     updateAnglesBar(_lastCmp,_lastAngles);
+    if(isFrontal()) drawTrajGraph();
   }else if(!_detPending){
     ctx.clearRect(0,0,cvs.width,cvs.height);
   }
@@ -1304,6 +1383,15 @@ async function saveRefFrame(){
   if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
   S.refs[S.ex.id]=angles;
   try{localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));}catch(e){}
+  // Also save position reference for frontal mode
+  if(isFrontal()){
+    const fpv=$('fp-vid');
+    if(fpv){
+      const pKps=_fpPoses?_fpPoses.keypoints:null;
+      if(pKps){const pRef=extractPositions(pKps);if(pRef){_posRef[S.ex.id]=pRef;
+        try{localStorage.setItem('apl_posref_'+S.ex.id,JSON.stringify({pos:pRef,dir:S.dir,at:new Date().toISOString()}));}catch(e){}}}
+    }
+  }
   // 선수명 확인 (fp-athlete 우선, 없으면 메인 입력란)
   const _athleteName=($('fp-athlete').value||'').trim();
   if(!_athleteName){
@@ -2118,7 +2206,20 @@ async function startLive(){
   S.live=true;S.lastFB=0;S.lastPr=0;S.goodN=0;S.speak=false;
   $('btn-main').className='stop';$('btn-main').textContent=TX[CL].btn_stop;
   $('btn-main').disabled=false;
-  $('abar').classList.add('on');$('rep-badge').classList.add('on');$('zone-badge').classList.add('on');
+  if(isFrontal()){
+    _posHistory=[];
+    $('pos-bar').classList.add('on');
+    $('abar').classList.remove('on');
+    const tw=$('traj-wrap'); if(tw) tw.classList.add('on');
+    // Size canvas
+    const tc=$('traj-cvs');
+    if(tc&&tc.offsetWidth) tc.width=tc.offsetWidth;
+  } else {
+    $('abar').classList.add('on');
+    $('pos-bar').classList.remove('on');
+    const tw=$('traj-wrap'); if(tw) tw.classList.remove('on');
+  }
+  $('rep-badge').classList.add('on');$('zone-badge').classList.add('on');
   if(!S.refs[S.ex.id])$('no-ref').classList.add('on');
   startRecording(); // audioStream already set, so skips getUserMedia inside
   loop();
@@ -2128,7 +2229,10 @@ function stopLive(){
   if(S.raf){cancelAnimationFrame(S.raf);S.raf=null;}
   if(_srcMode==='file') vid.pause();
   $('btn-main').className='start';$('btn-main').textContent=TX[CL].btn_start;
-  $('abar').classList.remove('on');$('chip').className='';
+  $('abar').classList.remove('on');$('pos-bar').classList.remove('on');
+  const _tw=$('traj-wrap');if(_tw)_tw.classList.remove('on');
+  _lastPos=null;_lastPosCmp=null;
+  $('chip').className='';
   $('no-det').classList.remove('on');$('no-ref').classList.remove('on');
   $('rep-badge').classList.remove('on');$('zone-badge').classList.remove('on');
   $('fb-txt').textContent='';
@@ -2374,6 +2478,236 @@ async function _tryUnlock(){
     if(inp){inp.classList.add('shake');setTimeout(()=>inp.classList.remove('shake'),350);inp.select();}
   }
 }
+
+// ── FRONTAL POSITION ANALYSIS ─────────────────────────────────────────────────
+const isFrontal = () => S.dir === 'front' || S.dir === 'back';
+let _posRef = {};         // ex.id → position reference object
+let _posHistory = [];     // [{t, v}] hip shift over time
+let _lastPos = null;
+let _lastPosCmp = null;
+const TRAJ_MS = 8000;
+const POS_THR = {hipShift:15, pelvicTilt:12, lKneeOff:12, rKneeOff:12};
+const ST_COL_POS = {good:'#4CAF50', warn:'#FFC107', crit:'#F44336', unk:'#555'};
+
+function extractPositions(kps){
+  const ok = p => p && p.score >= CONF;
+  const lHip=kps[11], rHip=kps[12], lKnee=kps[13], rKnee=kps[14];
+  const lAnk=kps[15], rAnk=kps[16], lSh=kps[5], rSh=kps[6];
+  if(!ok(lHip)||!ok(rHip)) return null;
+  const hipW = Math.abs(lHip.x - rHip.x);
+  if(hipW < 0.04) return null; // person facing sideways
+  const mHX = (lHip.x + rHip.x) / 2;
+  const mAX = (ok(lAnk)&&ok(rAnk)) ? (lAnk.x+rAnk.x)/2 : mHX;
+  // Hip shift: positive = hip center is to image-right of ankle center
+  const hipShift = Math.round(((mHX - mAX) / hipW) * 100);
+  // Pelvic tilt: positive = anatomical right hip (kps[12]) is lower on screen
+  const pelvicTilt = Math.round(((rHip.y - lHip.y) / hipW) * 100);
+  // Knee offset from ideal hip-ankle line (% of hip width)
+  function kneeOff(hip, knee, ank){
+    if(!ok(hip)||!ok(knee)||!ok(ank)) return null;
+    const dy = hip.y - ank.y;
+    if(Math.abs(dy) < 0.02) return null;
+    const t = (knee.y - ank.y) / dy;
+    const expX = ank.x + t * (hip.x - ank.x);
+    return Math.round(((knee.x - expX) / hipW) * 100);
+  }
+  const lKneeOff = kneeOff(lHip, lKnee, lAnk);
+  const rKneeOff = kneeOff(rHip, rKnee, rAnk);
+  const shoulderTilt = (ok(lSh)&&ok(rSh)) ? Math.round(((rSh.y-lSh.y)/hipW)*100) : null;
+  return {hipShift, pelvicTilt, lKneeOff, rKneeOff, shoulderTilt, hipW};
+}
+
+function comparePos(pos, ref){
+  if(!pos||!ref) return null;
+  const r = {};
+  for(const k of ['hipShift','pelvicTilt','lKneeOff','rKneeOff']){
+    const cur=pos[k], rv=ref[k];
+    if(cur==null||rv==null){r[k]={cur,dev:null,st:'unk'};continue;}
+    const dev = cur-rv;
+    const t = POS_THR[k];
+    r[k] = {cur, dev, st: Math.abs(dev)<=t?'good': Math.abs(dev)<=t*1.8?'warn':'crit'};
+  }
+  return r;
+}
+
+function posAllGood(cmp){
+  if(!cmp) return false;
+  return ['hipShift','pelvicTilt','lKneeOff','rKneeOff'].every(k=>!cmp[k]||cmp[k].st==='good'||cmp[k].st==='unk');
+}
+
+function posFeedbackStr(cmp){
+  if(!cmp) return null;
+  // xFlip: front view → image-right = anatomical-left → flip sign for anatomical feedback
+  const xFlip = S.dir==='back' ? 1 : -1;
+  const msgs = [];
+  const {hipShift, pelvicTilt, lKneeOff, rKneeOff} = cmp;
+  if(hipShift&&hipShift.dev!=null&&hipShift.st!=='good'){
+    const d = hipShift.dev * xFlip; // positive → hip too far to anatomical right
+    msgs.push({text: d>0?'골반 좀더 왼쪽으로':'골반 좀더 오른쪽으로', st:hipShift.st});
+  }
+  if(pelvicTilt&&pelvicTilt.dev!=null&&pelvicTilt.st!=='good'){
+    // positive dev → right hip dropped more than ref
+    msgs.push({text: pelvicTilt.dev>0?'오른 골반 올려':'왼 골반 올려', st:pelvicTilt.st});
+  }
+  if(lKneeOff&&lKneeOff.dev!=null&&lKneeOff.st!=='good'){
+    // lKneeOff positive = knee to image-right; anatomically lateral for left knee in front view (xFlip=-1)
+    // anatomically lateral = lKneeOff * (-xFlip); negative = valgus
+    const lat = lKneeOff.dev * (-xFlip);
+    msgs.push({text: lat<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로', st:lKneeOff.st});
+  }
+  if(rKneeOff&&rKneeOff.dev!=null&&rKneeOff.st!=='good'){
+    const lat = rKneeOff.dev * xFlip; // right knee: lateral = to anatomical right = xFlip direction
+    msgs.push({text: lat<0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로', st:rKneeOff.st});
+  }
+  if(!msgs.length) return null;
+  const worst = msgs.find(m=>m.st==='crit')||msgs.find(m=>m.st==='warn')||msgs[0];
+  return worst.text;
+}
+
+function updatePosBar(pos, cmp){
+  function setTrack(thumbId, refId, valId, val, refVal, range, metricKey){
+    const thumb=$(thumbId), refLine=$(refId), valEl=$(valId);
+    if(!thumb) return;
+    const v = val != null ? val : 0;
+    const pct = Math.max(2, Math.min(98, ((v + range) / (2*range)) * 100));
+    thumb.style.left = pct + '%';
+    const col = cmp&&cmp[metricKey] ? (ST_COL_POS[cmp[metricKey].st]||'#2196F3') : '#2196F3';
+    thumb.style.background = col;
+    if(valEl) valEl.textContent = val!=null ? (val>0?'+':'')+val : '--';
+    if(refLine){
+      if(refVal!=null){
+        const rp = Math.max(2,Math.min(98,((refVal+range)/(2*range))*100));
+        refLine.style.left = rp+'%'; refLine.style.display='block';
+      } else { refLine.style.display='none'; }
+    }
+  }
+  const ref = _posRef[S.ex.id];
+  setTrack('pt-hip','pr-hip','pv-hip', pos?pos.hipShift:null, ref?ref.hipShift:null, 80, 'hipShift');
+  setTrack('pt-pel','pr-pel','pv-pel', pos?pos.pelvicTilt:null, ref?ref.pelvicTilt:null, 60, 'pelvicTilt');
+  const lkEl=$('pv-lk'), rkEl=$('pv-rk');
+  if(lkEl){
+    lkEl.textContent = (pos&&pos.lKneeOff!=null) ? (pos.lKneeOff>0?'+':'')+pos.lKneeOff : '--';
+    lkEl.style.color = cmp&&cmp.lKneeOff ? (ST_COL_POS[cmp.lKneeOff.st]||'#fff') : '#fff';
+  }
+  if(rkEl){
+    rkEl.textContent = (pos&&pos.rKneeOff!=null) ? (pos.rKneeOff>0?'+':'')+pos.rKneeOff : '--';
+    rkEl.style.color = cmp&&cmp.rKneeOff ? (ST_COL_POS[cmp.rKneeOff.st]||'#fff') : '#fff';
+  }
+}
+
+function pushPosHistory(pos){
+  if(!pos) return;
+  const now = Date.now();
+  _posHistory.push({t:now, v:pos.hipShift});
+  _posHistory = _posHistory.filter(p => now-p.t < TRAJ_MS+300);
+}
+
+function drawTrajGraph(){
+  const cvs = $('traj-cvs');
+  if(!cvs||!cvs.offsetWidth) return;
+  if(cvs.width !== cvs.offsetWidth) cvs.width = cvs.offsetWidth;
+  const W=cvs.width, H=cvs.height||48;
+  const c = cvs.getContext('2d');
+  c.clearRect(0,0,W,H);
+  const range = 80;
+  const ref = _posRef[S.ex.id];
+  const refVal = ref ? ref.hipShift : null;
+  // Center line
+  c.beginPath(); c.strokeStyle='rgba(255,255,255,.08)'; c.lineWidth=1;
+  c.moveTo(0,H/2); c.lineTo(W,H/2); c.stroke();
+  // Reference line
+  if(refVal!=null){
+    const ry = H/2 - (Math.max(-range,Math.min(range,refVal))/range)*(H/2-4);
+    c.beginPath(); c.strokeStyle='rgba(255,255,255,.3)'; c.lineWidth=1;
+    c.setLineDash([4,4]); c.moveTo(0,ry); c.lineTo(W,ry); c.stroke(); c.setLineDash([]);
+  }
+  if(_posHistory.length < 2) return;
+  const now = Date.now();
+  c.beginPath();
+  let first=true;
+  for(const p of _posHistory){
+    const sx = W - ((now - p.t) / TRAJ_MS) * W;
+    const sy = H/2 - (Math.max(-range,Math.min(range,p.v))/range)*(H/2-4);
+    if(first){c.moveTo(sx,sy);first=false;}else c.lineTo(sx,sy);
+  }
+  c.strokeStyle='#2196F3'; c.lineWidth=2.5; c.lineJoin='round'; c.stroke();
+  // Current dot
+  const last = _posHistory[_posHistory.length-1];
+  const lx = W - ((now-last.t)/TRAJ_MS)*W;
+  const ly = H/2 - (Math.max(-range,Math.min(range,last.v))/range)*(H/2-4);
+  c.beginPath(); c.arc(lx,ly,4,0,Math.PI*2);
+  c.fillStyle='#2196F3'; c.fill();
+}
+
+// Draw position overlays on camera canvas
+function drawPosOverlay(kps, pos){
+  if(!pos) return;
+  const ok = p => p && p.score >= CONF;
+  const lHip=kps[11], rHip=kps[12], lKnee=kps[13], rKnee=kps[14];
+  const lAnk=kps[15], rAnk=kps[16];
+  // Hip shift: dashed vertical line from mid-hip to mid-ankle
+  if(ok(lHip)&&ok(rHip)&&ok(lAnk)&&ok(rAnk)){
+    const mh = coverXY({x:(lHip.x+rHip.x)/2, y:(lHip.y+rHip.y)/2, score:1});
+    const ma = coverXY({x:(lAnk.x+rAnk.x)/2, y:(lAnk.y+rAnk.y)/2, score:1});
+    ctx.save();
+    ctx.setLineDash([5,4]); ctx.beginPath();
+    ctx.moveTo(mh.x,mh.y); ctx.lineTo(ma.x,ma.y);
+    ctx.strokeStyle='rgba(33,150,243,.7)'; ctx.lineWidth=2; ctx.stroke();
+    ctx.setLineDash([]);
+    const label = (pos.hipShift>0?'+':'')+pos.hipShift;
+    ctx.font='bold 12px -apple-system,sans-serif';
+    ctx.strokeStyle='rgba(0,0,0,.8)'; ctx.lineWidth=3;
+    ctx.strokeText(label, mh.x+8, mh.y-4);
+    ctx.fillStyle='#2196F3'; ctx.fillText(label, mh.x+8, mh.y-4);
+    ctx.restore();
+  }
+  // Knee alignment deviation lines
+  function drawKneeLine(hip, knee, ank, label){
+    if(!ok(hip)||!ok(knee)||!ok(ank)) return;
+    const dy = hip.y - ank.y;
+    if(Math.abs(dy)<0.02) return;
+    const t = (knee.y-ank.y)/dy;
+    const expX = ank.x + t*(hip.x-ank.x);
+    const expP = coverXY({x:expX, y:knee.y, score:1});
+    const kneeP = coverXY(knee);
+    const dist = Math.abs(kneeP.x-expP.x);
+    if(dist < 4) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(expP.x,expP.y); ctx.lineTo(kneeP.x,kneeP.y);
+    ctx.strokeStyle = dist>18 ? 'rgba(244,67,54,.85)' : 'rgba(255,193,7,.85)';
+    ctx.lineWidth=3; ctx.lineCap='round'; ctx.stroke();
+    ctx.restore();
+  }
+  drawKneeLine(lHip,lKnee,lAnk,'L');
+  drawKneeLine(rHip,rKnee,rAnk,'R');
+}
+
+// Camera live recovery (used when visibilitychange fires during analysis)
+async function _recoverCameraLive(){
+  if(_srcMode!=='camera'||_camBusy) return;
+  const tracks = S.stream ? S.stream.getVideoTracks() : [];
+  const dead = !tracks.length || tracks.every(t=>t.readyState==='ended');
+  const stuck = vid.readyState<2 || vid.paused;
+  if(!dead&&!stuck) return; // camera is fine
+  _camBusy = true;
+  const wasLive = S.live;
+  try{
+    if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},
+      audio:false});
+    S.stream=stream; vid.srcObject=stream; vid.load();
+    await waitForVideo(3000);
+    await vid.play().catch(()=>{});
+    vid.style.transform = S.facingMode==='user'?'scaleX(-1)':'';
+    cvs.style.transform = S.facingMode==='user'?'scaleX(-1)':'';
+    resizeCam();
+    if(wasLive && !S.raf){ S.raf=requestAnimationFrame(loop); }
+  }catch(e){console.error('Camera live recovery failed:',e);}
+  finally{_camBusy=false;}
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init(){
   setAppHeight(); // viewport 높이 즉시 보정
@@ -2381,6 +2715,10 @@ async function init(){
     try{
       const raw=localStorage.getItem('apl_ref_'+ex.id);
       if(raw){const d=JSON.parse(raw);S.refs[ex.id]=d.angles;}
+    }catch(e){}
+    try{
+      const praw=localStorage.getItem('apl_posref_'+ex.id);
+      if(praw){const pd=JSON.parse(praw);_posRef[ex.id]=pd.pos;}
     }catch(e){}
   }
   buildExChips();updateRefUI();
@@ -2503,8 +2841,9 @@ async function init(){
       if(document.visibilityState==='visible'){
         // 레이아웃 즉시 복원 후 카메라 상태 점검
         setAppHeight();
-        if(_srcMode==='camera') setTimeout(checkCameraHealth,400);
-        else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
+        if(_srcMode==='camera'){
+          setTimeout(()=>{ if(S.live) _recoverCameraLive(); else checkCameraHealth(); },400);
+        } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
       }
     });
     vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera') checkCameraHealth();});

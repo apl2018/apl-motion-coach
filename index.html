@@ -1200,15 +1200,40 @@ async function _runDetection(){
         chip.className=ov;
         chip.textContent=ov==='good'?L.chip_good:ov==='warn'?L.chip_warn:L.chip_crit;
       }else{chip.className='';}
-      // Zone-entry transition detection: must happen BEFORE S.inZone is updated
-      if(inZone && !S.inZone){ _zoneEntryAt=Date.now(); _zoneEntryFbGiven=false; }
+      // ── FEEDBACK ZONE LOGIC ───────────────────────────────────────────────────
+      // Frontal mode: zone = position close to reference (no 'crit' deviations)
+      // Lateral mode: zone = angle-based isPoseInZone result
+      let feedInZone;
+      if(isFrontal()&&_lastPosCmp&&_posRef[S.ex.id]){
+        feedInZone=['hipShift','pelvicTilt','lKneeOff','rKneeOff'].every(
+          k=>!_lastPosCmp[k]||_lastPosCmp[k].dev==null||_lastPosCmp[k].st!=='crit');
+      } else {
+        feedInZone=inZone;
+      }
+      // Mark that user has been out of zone (required before entry triggers feedback)
+      if(!feedInZone) _hasExitedZone=true;
+      // Zone entry: only count if user was previously outside the zone
+      if(feedInZone&&!_feedZone&&_hasExitedZone){
+        _zoneEntryAt=Date.now();_zoneEntryFbGiven=false;
+      }
+      _feedZone=feedInZone;
+      S.inZone=inZone; // UI zone badge stays angle-based
+
       if(isFrontal()&&_lastPosCmp){
         const now2=Date.now();
-        if(!posAllGood(_lastPosCmp)&&!_zoneEntryFbGiven&&now2-_zoneEntryAt>400&&now2-S.lastFB>_MIN_FB_GAP&&!S.speak){
+        if(feedInZone&&!_zoneEntryFbGiven&&now2-_zoneEntryAt>400&&now2-S.lastFB>_MIN_FB_GAP&&!S.speak){
           const fb=posFeedbackStr(_lastPosCmp);
-          if(fb){speak(fb);S.lastFB=now2;_zoneEntryFbGiven=true;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
+          if(fb){
+            speak(fb);S.lastFB=now2;_zoneEntryFbGiven=true;
+            S.fbLog[fb]=(S.fbLog[fb]||0)+1;
+          } else {
+            // position matches reference — praise
+            const PR=TX[CL].PRAISE;
+            speak(PR[Math.floor(Math.random()*PR.length)]);
+            S.lastFB=now2;_zoneEntryFbGiven=true;
+          }
         }
-      } else if(cmp) doFeedback(cmp,inZone);
+      } else if(cmp) doFeedback(cmp,feedInZone);
     }
   }catch(e){console.warn(e);}
   _detPending=false;
@@ -2226,7 +2251,7 @@ async function startLive(){
     $('pos-bar').classList.remove('on');
     const tw=$('traj-wrap'); if(tw) tw.classList.remove('on');
   }
-  _zoneEntryAt=0;_zoneEntryFbGiven=false;
+  _zoneEntryAt=0;_zoneEntryFbGiven=false;_feedZone=false;_hasExitedZone=false;
   $('rep-badge').classList.add('on');$('zone-badge').classList.add('on');
   if(!S.refs[S.ex.id])$('no-ref').classList.add('on');
   startRecording(); // audioStream already set, so skips getUserMedia inside
@@ -2688,20 +2713,24 @@ async function _forceCameraRestart(){
   if(_srcMode!=='camera'||_camBusy||S.caps) return;
   _camBusy=true;
   const wasLive=S.live;
+  // Pause rAF loop during restart to avoid detection errors on null srcObject
+  if(S.raf){cancelAnimationFrame(S.raf);S.raf=null;}
   try{
-    if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
-    S.stream=null; vid.srcObject=null;
-    await new Promise(r=>setTimeout(r,200));
-    const stream=await navigator.mediaDevices.getUserMedia({
+    // iOS critical: acquire NEW stream BEFORE stopping old one.
+    // Stopping first releases hardware; iOS then delivers black frames on next getUserMedia.
+    const newStream=await navigator.mediaDevices.getUserMedia({
       video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},
       audio:false});
-    S.stream=stream; vid.srcObject=stream; vid.load();
+    // Now it is safe to stop the old tracks (new stream already active)
+    if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
+    S.stream=newStream; vid.srcObject=newStream;
     await waitForVideo(3000);
     await vid.play().catch(()=>{});
     vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
     cvs.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
     resizeCam();
-    if(wasLive&&!S.raf){S.raf=requestAnimationFrame(loop);}
+    // Always restart loop when live (regardless of S.raf state since we cancelled above)
+    if(wasLive){S.raf=requestAnimationFrame(loop);}
   }catch(e){console.error('Force camera restart failed:',e);}
   finally{_camBusy=false;}
 }
@@ -2710,6 +2739,8 @@ async function _forceCameraRestart(){
 let _zoneEntryAt=0;
 let _zoneEntryFbGiven=false;
 const _MIN_FB_GAP=3000;
+let _feedZone=false;       // current feed-zone state (for transition detection)
+let _hasExitedZone=false;  // true once user has left zone; required before re-entry triggers feedback
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init(){
@@ -2844,14 +2875,14 @@ async function init(){
       if(document.visibilityState==='visible'){
         setAppHeight();
         if(_srcMode==='camera'){
-          setTimeout(()=>{ if(!S.caps) _forceCameraRestart(); },400);
+          setTimeout(()=>{ if(!S.caps) _forceCameraRestart(); },600);
         } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
       }
     });
     // iOS bfcache: pageshow with persisted=true means page restored from cache
     window.addEventListener('pageshow',e=>{
       if(e.persisted&&_srcMode==='camera'){
-        setTimeout(()=>{ if(!S.caps) _forceCameraRestart(); },400);
+        setTimeout(()=>{ if(!S.caps) _forceCameraRestart(); },600);
       }
     });
     vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera') checkCameraHealth();});

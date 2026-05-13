@@ -23,6 +23,34 @@ html{height:100%;height:-webkit-fill-available;overflow:hidden}
 body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;background:var(--bg);
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--txt)}
 
+/* PREMIUM */
+#prm-badge{font-size:10px;font-weight:800;padding:3px 8px;border-radius:10px;
+  letter-spacing:0.5px;cursor:pointer;border:none;line-height:1.4;transition:all .2s}
+#prm-badge.free{background:rgba(255,255,255,.1);color:rgba(255,255,255,.55)}
+#prm-badge.pro{background:linear-gradient(135deg,#FFD700,#FFA000);color:#000}
+#prm-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:600;
+  display:none;align-items:center;justify-content:center;padding:20px}
+#prm-modal.on{display:flex}
+#prm-box{background:#1A1A2E;border-radius:20px;padding:28px 24px;width:100%;max-width:340px;
+  border:1px solid rgba(255,255,255,.1);display:flex;flex-direction:column;gap:16px}
+#prm-title{font-size:18px;font-weight:800;text-align:center;color:#fff}
+#prm-desc{font-size:13px;color:rgba(255,255,255,.55);text-align:center;line-height:1.5}
+#prm-input{background:#16213E;border:1px solid rgba(255,255,255,.1);border-radius:10px;
+  color:#fff;font-size:15px;padding:12px 16px;width:100%;outline:none;-webkit-appearance:none}
+#prm-input:focus{border-color:#2196F3}
+#prm-input.shake{animation:prmShake .3s ease}
+@keyframes prmShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+#prm-err{font-size:12px;color:#F44336;text-align:center;display:none;min-height:16px}
+#prm-err.on{display:block}
+.prm-btn-row{display:flex;gap:10px}
+#prm-cancel{flex:1;padding:12px;border-radius:10px;background:rgba(255,255,255,.08);
+  border:none;color:rgba(255,255,255,.55);font-size:14px;font-weight:600;cursor:pointer}
+#prm-confirm{flex:2;padding:12px;border-radius:10px;
+  background:linear-gradient(135deg,#FFD700,#FFA000);
+  border:none;color:#000;font-size:14px;font-weight:800;cursor:pointer}
+#prm-confirm:active,#prm-cancel:active{opacity:.7}
+#prm-free-note{font-size:11px;color:rgba(255,255,255,.25);text-align:center;line-height:1.5}
+
 /* INIT OVERLAY */
 #init{position:fixed;inset:0;background:var(--bg);display:flex;
   flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:200}
@@ -402,6 +430,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         </div>
       </div>
       <button id="btn-data-open" title="기준자세 데이터">📊</button>
+      <button id="prm-badge" class="free">FREE</button>
       <button id="btn-flip-hdr" title="카메라 전환">🔄</button>
       <div id="mdl-status">
         <div class="mdot" id="mdot"></div>
@@ -422,6 +451,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
       <div class="ai" id="ai-hip"><div class="aidot"></div><span class="ailbl">고관절</span><span class="aival">--°</span></div>
       <div class="ai" id="ai-trunk"><div class="aidot"></div><span class="ailbl">몸통</span><span class="aival">--°</span></div>
       <div class="ai" id="ai-spine"><div class="aidot"></div><span class="ailbl">척추</span><span class="aival">--°</span></div>
+      <div class="ai" id="ai-shoulder"><div class="aidot"></div><span class="ailbl">어깨</span><span class="aival">--°</span></div>
+      <div class="ai" id="ai-elbow"><div class="aidot"></div><span class="ailbl">팔꿈치</span><span class="aival">--°</span></div>
     </div>
     <div id="cdown"><div id="cnum">5</div></div>
     <div id="succ"><span>✓</span></div>
@@ -481,6 +512,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         <label class="jsel active" id="jsel-hip"><input type="checkbox" checked><div class="jdot"></div>고관절</label>
         <label class="jsel active" id="jsel-trunk"><input type="checkbox" checked><div class="jdot"></div>몸통</label>
         <label class="jsel active" id="jsel-spine"><input type="checkbox" checked><div class="jdot"></div>척추</label>
+        <label class="jsel active" id="jsel-shoulder"><input type="checkbox" checked><div class="jdot"></div>어깨</label>
+        <label class="jsel active" id="jsel-elbow"><input type="checkbox" checked><div class="jdot"></div>팔꿈치</label>
       </div>
     </div>
     <div id="ref-card">
@@ -563,12 +596,25 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     </div>
   </div>
 </div>
+<div id="prm-modal">
+  <div id="prm-box">
+    <div id="prm-title">&#128081; APL Premium</div>
+    <div id="prm-desc">&#54532;&#47532;&#48120;&#50516; &#48708;&#48128;&#48264;&#54840;&#47484; &#51077;&#47141;&#54616;&#47732;<br>&#45936;&#51060;&#53552; &#51200;&#51109; &#48143; &#48373;&#49324; &#44592;&#45733;&#51060; &#54876;&#49457;&#54868;&#46121;&#45768;&#45796;.</div>
+    <input id="prm-input" type="password" placeholder="&#48708;&#48128;&#48264;&#54840; &#51077;&#47141;" autocomplete="off">
+    <div id="prm-err">&#48708;&#48128;&#48264;&#54840;&#44032; &#50741;&#48148;&#47476;&#51648; &#50506;&#49845;&#45768;&#45796;.</div>
+    <div class="prm-btn-row">
+      <button id="prm-cancel">&#52712;&#49548;</button>
+      <button id="prm-confirm">&#51096;&#44552; &#54644;&#51228;</button>
+    </div>
+    <div id="prm-free-note">&#47924;&#47308; &#48260;&#51204;: &#48516;&#49437;&#183;&#52852;&#47700;&#46972; &#44592;&#45733; &#47784;&#46160; &#49324;&#50857; &#44032;&#45733;<br>&#51200;&#51109;&#183;&#48373;&#49324;&#45716; &#54532;&#47532;&#48120;&#50516; &#51204;&#50857;&#51077;&#45768;&#45796;.</div>
+  </div>
+</div>
 <script>
 'use strict';
 // ── EXERCISES ────────────────────────────────────────────────────────────────
 const EXERCISES = Array.from({length:20},(_,i)=>({
   id:`motion${i+1}`, name:`Motion ${i+1}`, cam:'left',
-  tgt:null, tol:{knee:10,hip:10,trunk:10,spine:10}, generic:true,
+  tgt:null, tol:{knee:10,hip:10,trunk:10,spine:10,shoulder:15,elbow:15}, generic:true,
 }));
 
 const SKEL=[[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]];
@@ -597,7 +643,7 @@ ko:{flag:'🇰🇷',label:'KO',voice_lang:'ko-KR',
   sum_exercise:'운동 종목',sum_reps:'수행 횟수',sum_time:'총 운동 시간',
   sum_accuracy:'분석 정확도',sum_excellent:'우수',sum_good_rating:'보통',sum_poor:'개선 필요',
   sum_coaching:'주요 코칭 내용',sum_reps_unit:'회',
-  joint_knee:'무릎',joint_hip:'고관절',joint_trunk:'몸통',joint_spine:'척추',
+  joint_knee:'무릎',joint_hip:'고관절',joint_trunk:'몸통',joint_spine:'척추',joint_shoulder:'어깨',joint_elbow:'팔꿈치',
   voice_start:' 분석 시작.',voice_stop:'운동 끝! 수고했어.',
   voice_ref_saved:'기준 자세 저장됐어.',
   voice_ref_fail:'자세 인식 실패. 다시 해봐.',
@@ -613,6 +659,10 @@ ko:{flag:'🇰🇷',label:'KO',voice_lang:'ko-KR',
     trunk_up:{warn:'상체 앞으로 기울여.',crit:'상체 더 기울여.'},
     spine_flx:{warn:'등 더 펴.',crit:'등 굽었어. 펴.'},
     spine_ext:{warn:'허리 중립 유지.',crit:'허리 너무 젖혔어.'},
+    shoulder_str:{warn:'어깨 앞으로 내려.',crit:'어깨 너무 뒤로 젖혔어. 앞으로 내려.'},
+    shoulder_flex:{warn:'어깨 뒤로 펴.',crit:'어깨 너무 앞으로 굽었어.'},
+    elbow_str:{warn:'팔꿈치 더 구부려.',crit:'팔꿈치 더 구부려. 90도 목표.'},
+    elbow_bnt:{warn:'팔꿈치 더 펴.',crit:'팔꿈치 너무 굽혔어. 펴.'},
   }
 },
 en:{flag:'🇺🇸',label:'EN',voice_lang:'en-US',
@@ -636,7 +686,7 @@ en:{flag:'🇺🇸',label:'EN',voice_lang:'en-US',
   sum_exercise:'Exercise',sum_reps:'Reps',sum_time:'Duration',
   sum_accuracy:'Accuracy',sum_excellent:'Excellent',sum_good_rating:'Good',sum_poor:'Needs Work',
   sum_coaching:'Key Coaching',sum_reps_unit:' reps',
-  joint_knee:'Knee',joint_hip:'Hip',joint_trunk:'Trunk',joint_spine:'Spine',
+  joint_knee:'Knee',joint_hip:'Hip',joint_trunk:'Trunk',joint_spine:'Spine',joint_shoulder:'Shoulder',joint_elbow:'Elbow',
   voice_start:' analysis starting.',voice_stop:'Session complete. Well done!',
   voice_ref_saved:'Reference pose saved.',
   voice_ref_fail:'Pose not detected. Please try again.',
@@ -652,6 +702,10 @@ en:{flag:'🇺🇸',label:'EN',voice_lang:'en-US',
     trunk_up:{warn:'Lean your torso slightly forward.',crit:'Lean your torso further forward.'},
     spine_flx:{warn:'Straighten your back a bit.',crit:'Your back is rounded. Extend your spine.'},
     spine_ext:{warn:'Adjust your lower back to neutral.',crit:'Lower back over-extended. Keep a neutral spine.'},
+    shoulder_str:{warn:'Bring your shoulder slightly forward.',crit:'Shoulder too far back. Lower it forward.'},
+    shoulder_flex:{warn:'Open your shoulder back.',crit:'Shoulder rounding too far forward.'},
+    elbow_str:{warn:'Bend your elbow a little more.',crit:'Bend your elbow more. Aim for 90 degrees.'},
+    elbow_bnt:{warn:'Straighten your elbow slightly.',crit:'Elbow is bent too much. Extend it.'},
   }
 },
 ja:{flag:'🇯🇵',label:'JA',voice_lang:'ja-JP',
@@ -675,7 +729,7 @@ ja:{flag:'🇯🇵',label:'JA',voice_lang:'ja-JP',
   sum_exercise:'種目',sum_reps:'回数',sum_time:'運動時間',
   sum_accuracy:'分析精度',sum_excellent:'優秀',sum_good_rating:'普通',sum_poor:'要改善',
   sum_coaching:'主要コーチング',sum_reps_unit:'回',
-  joint_knee:'膝',joint_hip:'股関節',joint_trunk:'体幹',joint_spine:'脊椎',
+  joint_knee:'膝',joint_hip:'股関節',joint_trunk:'体幹',joint_spine:'脊椎',joint_shoulder:'肩',joint_elbow:'肘',
   voice_start:'の分析を開始します。',voice_stop:'お疲れ様でした！',
   voice_ref_saved:'基準姿勢を保存しました。',
   voice_ref_fail:'姿勢を検出できませんでした。再試行してください。',
@@ -714,7 +768,7 @@ zh:{flag:'🇨🇳',label:'ZH',voice_lang:'zh-CN',
   sum_exercise:'运动项目',sum_reps:'完成次数',sum_time:'运动时间',
   sum_accuracy:'分析准确度',sum_excellent:'优秀',sum_good_rating:'良好',sum_poor:'需改进',
   sum_coaching:'主要指导内容',sum_reps_unit:'次',
-  joint_knee:'膝盖',joint_hip:'髋关节',joint_trunk:'躯干',joint_spine:'脊柱',
+  joint_knee:'膝盖',joint_hip:'髋关节',joint_trunk:'躯干',joint_spine:'脊柱',joint_shoulder:'肩膀',joint_elbow:'肘关节',
   voice_start:'分析开始。',voice_stop:'运动结束，辛苦了！',
   voice_ref_saved:'基准姿势已保存。',
   voice_ref_fail:'未能识别姿势，请重试。',
@@ -753,7 +807,7 @@ es:{flag:'🇪🇸',label:'ES',voice_lang:'es-ES',
   sum_exercise:'Ejercicio',sum_reps:'Repeticiones',sum_time:'Duración',
   sum_accuracy:'Precisión',sum_excellent:'Excelente',sum_good_rating:'Bien',sum_poor:'Mejorar',
   sum_coaching:'Coaching principal',sum_reps_unit:' reps',
-  joint_knee:'Rodilla',joint_hip:'Cadera',joint_trunk:'Tronco',joint_spine:'Columna',
+  joint_knee:'Rodilla',joint_hip:'Cadera',joint_trunk:'Tronco',joint_spine:'Columna',joint_shoulder:'Hombro',joint_elbow:'Codo',
   voice_start:' análisis iniciando.',voice_stop:'Sesión completa. Bien hecho!',
   voice_ref_saved:'Pose de referencia guardada.',
   voice_ref_fail:'Pose no detectada. Inténtalo de nuevo.',
@@ -792,7 +846,7 @@ fr:{flag:'🇫🇷',label:'FR',voice_lang:'fr-FR',
   sum_exercise:'Exercice',sum_reps:'Répétitions',sum_time:'Durée',
   sum_accuracy:'Précision',sum_excellent:'Excellent',sum_good_rating:'Bien',sum_poor:'À améliorer',
   sum_coaching:'Coaching clé',sum_reps_unit:' rép',
-  joint_knee:'Genou',joint_hip:'Hanche',joint_trunk:'Tronc',joint_spine:'Colonne',
+  joint_knee:'Genou',joint_hip:'Hanche',joint_trunk:'Tronc',joint_spine:'Colonne',joint_shoulder:'Épaule',joint_elbow:'Coude',
   voice_start:' analyse en cours.',voice_stop:'Séance terminée. Bravo !',
   voice_ref_saved:'Pose de référence sauvegardée.',
   voice_ref_fail:'Pose non détectée. Veuillez réessayer.',
@@ -821,11 +875,12 @@ const S={
   recorder:null,recChunks:[],recTimer:null,recSec:0,
   drawCompInterval:null,audioStream:null,compCanvas:null,
   inZone:false,repCount:0,startTime:0,stats:null,fbLog:{},
-  jointSel:{knee:true,hip:true,trunk:true,spine:true},
+  jointSel:{knee:true,hip:true,trunk:true,spine:true,shoulder:true,elbow:true},
+  premium:false,
 };
 function freshStats(){
   return{zoneFrames:0,totalFrames:0,
-    joints:{knee:{g:0,w:0,c:0},hip:{g:0,w:0,c:0},trunk:{g:0,w:0,c:0},spine:{g:0,w:0,c:0}}};
+    joints:{knee:{g:0,w:0,c:0},hip:{g:0,w:0,c:0},trunk:{g:0,w:0,c:0},spine:{g:0,w:0,c:0},shoulder:{g:0,w:0,c:0},elbow:{g:0,w:0,c:0}}};
 }
 
 // ── DOM ──────────────────────────────────────────────────────────────────────
@@ -855,14 +910,22 @@ function extractAngles(kps){
   const useLeft=S.dir!=='right';
   const sh=useLeft?kps[5]:kps[6],hp=useLeft?kps[11]:kps[12];
   const kn=useLeft?kps[13]:kps[14],an=useLeft?kps[15]:kps[16];
+  const el=useLeft?kps[7]:kps[8],wr=useLeft?kps[9]:kps[10];
   const mSh=mid(kps[5],kps[6]),mHp=mid(kps[11],kps[12]);
-  return{knee:angle3(hp,kn,an),hip:angle3(sh,hp,kn),trunk:angleV(mSh,mHp),spine:angle3(kps[0],mSh,mHp)};
+  return{
+    knee:angle3(hp,kn,an),
+    hip:angle3(sh,hp,kn),
+    trunk:angleV(mSh,mHp),
+    spine:angle3(kps[0],mSh,mHp),
+    shoulder:angle3(el,sh,hp),   // 어깨 굴곡 각도 (상완 vs 체간)
+    elbow:angle3(sh,el,wr)       // 팔꿈치 굴곡 각도
+  };
 }
 function compare(curr,ref,ex){
   const out={};
-  for(const k of ['knee','hip','trunk','spine']){
+  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     const c=curr[k],r=ref[k];
-    if(c===null||r===null){out[k]={st:'unk',dev:0,cur:null,ref:null};continue;}
+    if(c==null||r==null){out[k]={st:'unk',dev:0,cur:null,ref:null};continue;}
     const dev=c-r,t=ex.tol[k]||10;
     const st=Math.abs(dev)<=5?'good':Math.abs(dev)<=t?'warn':'crit';
     out[k]={st,dev,cur:c,ref:r};
@@ -883,14 +946,15 @@ function primaryFB(cmp){
   }
   if(!worst) return null;
   const map={knee:worst.dev>0?'knee_str':'knee_bnt',hip:worst.dev>0?'hip_up':'hip_fwd',
-    trunk:worst.dev>0?'trunk_up':'trunk_fwd',spine:worst.dev>0?'spine_ext':'spine_flx'};
+    trunk:worst.dev>0?'trunk_up':'trunk_fwd',spine:worst.dev>0?'spine_ext':'spine_flx',
+    shoulder:worst.dev>0?'shoulder_str':'shoulder_flex',elbow:worst.dev>0?'elbow_str':'elbow_bnt'};
   return{key:map[worst.k],st:worst.st};
 }
 const ZONE_THRESH=45; // avg deviation ≤45° across detected joints
 function isPoseInZone(angles,ref){
   if(!ref) return false;
   let sum=0,cnt=0;
-  for(const k of ['knee','hip','trunk','spine']){
+  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     if(!S.jointSel[k]) continue;
     const cur=angles[k],rv=ref[k];
     if(cur===null||rv===null||rv===undefined) continue;
@@ -899,9 +963,9 @@ function isPoseInZone(angles,ref){
   if(cnt===0) return false;
   // Also pass if at least half the detected joints are within threshold individually
   let withinCount=0;
-  for(const k of ['knee','hip','trunk','spine']){
+  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     const cur=angles[k],rv=ref[k];
-    if(cur===null||rv===null||rv===undefined) continue;
+    if(cur==null||rv==null) continue;
     if(Math.abs(cur-rv)<=ZONE_THRESH) withinCount++;
   }
   return (sum/cnt)<=ZONE_THRESH || withinCount>=Math.max(1,Math.ceil(cnt*0.6));
@@ -941,7 +1005,7 @@ function coverXY(kp){
   return{x:kp.x*sc+(cw-vw*sc)/2,y:kp.y*sc+(ch-vh*sc)/2};
 }
 const ST_COL={good:'#4CAF50',warn:'#FFC107',crit:'#F44336',unk:'#2196F3'};
-const KP_JOINT={11:'hip',12:'hip',13:'knee',14:'knee',5:'trunk',6:'trunk'};
+const KP_JOINT={11:'hip',12:'hip',13:'knee',14:'knee',5:'shoulder',6:'shoulder',7:'elbow',8:'elbow'};
 function kpColor(idx,cmp){
   const j=KP_JOINT[idx];
   return j&&cmp&&cmp[j]?ST_COL[cmp[j].st]:'#2196F3';
@@ -963,18 +1027,26 @@ function drawFrame(kps,cmp){
     ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
   }
   if(cmp){
-    for(const{i,k}of [{i:13,k:'knee'},{i:14,k:'knee'},{i:11,k:'hip'},{i:12,k:'hip'}]){
+    // offset: +x/+y means right/down from keypoint
+    const lblMap=[
+      {i:13,k:'knee',dx:10,dy:-6},{i:14,k:'knee',dx:10,dy:-6},
+      {i:11,k:'hip',dx:10,dy:-6},{i:12,k:'hip',dx:10,dy:-6},
+      {i:5,k:'shoulder',dx:-46,dy:-8},{i:6,k:'shoulder',dx:10,dy:-8},
+      {i:7,k:'elbow',dx:10,dy:-6},{i:8,k:'elbow',dx:10,dy:-6},
+    ];
+    for(const{i,k,dx,dy}of lblMap){
       const kp=kps[i];
       if(!kp||kp.score<CONF||!cmp[k]||cmp[k].cur===null) continue;
+      if(!S.jointSel[k]) continue; // skip deselected
       const p=coverXY(kp),col=ST_COL[cmp[k].st]||'#fff',t=cmp[k].cur+'°';
       ctx.font='bold 13px -apple-system,sans-serif';
-      ctx.strokeStyle='rgba(0,0,0,.8)';ctx.lineWidth=3;ctx.strokeText(t,p.x+10,p.y-6);
-      ctx.fillStyle=col;ctx.fillText(t,p.x+10,p.y-6);
+      ctx.strokeStyle='rgba(0,0,0,.8)';ctx.lineWidth=3;ctx.strokeText(t,p.x+dx,p.y+dy);
+      ctx.fillStyle=col;ctx.fillText(t,p.x+dx,p.y+dy);
     }
   }
 }
 function updateAnglesBar(cmp,rawAngles){
-  for(const k of ['knee','hip','trunk','spine']){
+  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     const el=$('ai-'+k);if(!el) continue;
     const sel=S.jointSel[k];
     el.style.opacity=sel?'1':'0.3';
@@ -1037,7 +1109,7 @@ async function _runDetection(){
       S.inZone=inZone;
       if(S.stats&&inZone&&cmp){
         S.stats.zoneFrames++;
-        for(const k of ['knee','hip','trunk','spine']){
+        for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
           if(!S.jointSel[k]) continue;
           const c=cmp[k];if(!c||c.st==='unk') continue;
           if(c.st==='good')S.stats.joints[k].g++;
@@ -1224,6 +1296,7 @@ function saveFpPhoto(){
 }
 
 async function saveRefFrame(){
+  if(!S.premium){requirePremium(saveRefFrame);return;}
   if(!_fpPoses){await _detectFpPose();}
   if(!_fpPoses){speak(TX[CL].voice_ref_fail);return;}
   const kps=_fpPoses.keypoints;
@@ -1275,6 +1348,8 @@ function saveRefLog(angles,name,imgDataUrl){
     hip:angles.hip!==null?Math.round(angles.hip*10)/10:null,
     trunk:angles.trunk!==null?Math.round(angles.trunk*10)/10:null,
     spine:angles.spine!==null?Math.round(angles.spine*10)/10:null,
+    shoulder:angles.shoulder!=null?Math.round(angles.shoulder*10)/10:null,
+    elbow:angles.elbow!=null?Math.round(angles.elbow*10)/10:null,
     at:new Date().toISOString()
   };
   if(imgDataUrl) entry.img=imgDataUrl; // optional photo thumbnail
@@ -1321,7 +1396,7 @@ function renderDataList(q){
         <div class="data-row-name">${e.name}</div>
         <div class="data-row-sub">${e.exName} · ${dirLabel} · ${dt}</div>
         <div class="data-row-sub" style="color:var(--txt2);margin-top:2px">
-          무릎 ${e.knee??"-"}° / 고관절 ${e.hip??"-"}° / 몸통 ${e.trunk??"-"}° / 척추 ${e.spine??"-"}°
+          무릎 ${e.knee??"-"}° / 고관절 ${e.hip??"-"}° / 몸통 ${e.trunk??"-"}° / 척추 ${e.spine??"-"}° / 어깨 ${e.shoulder??"-"}° / 팔꿈치 ${e.elbow??"-"}°
         </div>
       </div>
       <div class="data-row-actions">
@@ -1341,11 +1416,12 @@ function renderDataList(q){
   });
 }
 function copyDataRow(e){
+  if(!S.premium){requirePremium(()=>copyDataRow(e));return;}
   const d=new Date(e.at);
   const dt=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const dirLabel={left:"왼쪽",right:"오른쪽",front:"정면",back:"후면"}[e.dir]||e.dir;
   const photoCol=e.img?"(사진있음)":"";
-  const row=[e.name,e.exName,dirLabel,e.knee??"",e.hip??"",e.trunk??"",e.spine??"",dt,photoCol].join("\t");
+  const row=[e.name,e.exName,dirLabel,e.knee??"",e.hip??"",e.trunk??"",e.spine??"",e.shoulder??"",e.elbow??"",dt,photoCol].join("\t");
   navigator.clipboard.writeText(row).then(()=>{
     // 복사 완료 피드백
     $("data-count").textContent="✅ 복사됨!";
@@ -1378,17 +1454,18 @@ function deleteAllData(){
   $("data-search").value="";
 }
 function copyAllData(){
+  if(!S.premium){requirePremium(copyAllData);return;}
   let log=[];
   try{log=JSON.parse(localStorage.getItem("apl_ref_log")||"[]");}catch(e){}
   const q=$("data-search").value.trim().toLowerCase();
   const filtered=q?log.filter(e=>e.name.toLowerCase().includes(q)):log;
   if(!filtered.length) return;
-  const header="선수명\t운동명\t촬영방향\t무릎(°)\t고관절(°)\t몸통(°)\t척추(°)\t날짜\t사진";
+  const header="선수명\t운동명\t촬영방향\t무릎(°)\t고관절(°)\t몸통(°)\t척추(°)\t어깨(°)\t팔꿈치(°)\t날짜\t사진";
   const rows=filtered.map(e=>{
     const d=new Date(e.at);
     const dt=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
     const dirLabel={left:"왼쪽",right:"오른쪽",front:"정면",back:"후면"}[e.dir]||e.dir;
-    return [e.name,e.exName,dirLabel,e.knee??"",e.hip??"",e.trunk??"",e.spine??"",dt,e.img?"(사진있음)":""].join("\t");
+    return [e.name,e.exName,dirLabel,e.knee??"",e.hip??"",e.trunk??"",e.spine??"",e.shoulder??"",e.elbow??"",dt,e.img?"(사진있음)":""].join("\t");
   });
   const tsv=[header,...rows].join("\n");
   navigator.clipboard.writeText(tsv).then(()=>{
@@ -1421,10 +1498,10 @@ const OSC_MAX_DEV=80; // only count rep if closest approach ≤80° avg deviatio
 function getAvgDev(angles,ref){
   if(!ref) return null;
   let sum=0,cnt=0;
-  for(const k of ['knee','hip','trunk','spine']){
+  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     if(!S.jointSel[k]) continue;
     const c=angles[k],r=ref[k];
-    if(c===null||r===null||r===undefined) continue;
+    if(c==null||r==null) continue;
     sum+=Math.abs(c-r);cnt++;
   }
   return cnt>0?sum/cnt:null;
@@ -2092,7 +2169,7 @@ function showSummary(elapsed){
   scoreEl.className='sum-score-num '+(pct>=80?'good':pct>=50?'warn':'crit');
   $('sum-score-lbl').innerHTML=L.sum_score_lbl+'<br><span style="font-size:11px">'+L.sum_zone_pre+st.zoneFrames+L.sum_zone_suf+'</span>';
   $('sum-joints-lbl').textContent=L.sum_joints_title;
-  const jlbls={knee:L.joint_knee,hip:L.joint_hip,trunk:L.joint_trunk,spine:L.joint_spine};
+  const jlbls={knee:L.joint_knee,hip:L.joint_hip,trunk:L.joint_trunk,spine:L.joint_spine,shoulder:L.joint_shoulder,elbow:L.joint_elbow};
   const bars=$('sum-bars');bars.innerHTML='';
   for(const k of selKeys){
     const j=st.joints[k],tot=j.g+j.w+j.c||1;
@@ -2215,7 +2292,7 @@ function applyLang(){
   $('rep-lbl').textContent=L.rep_lbl;
   if(S.live)$('btn-main').textContent=L.btn_stop;
   else $('btn-main').textContent=L.btn_start;
-  for(const k of ['knee','hip','trunk','spine']){
+  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     const el=$('ai-'+k);
     if(el)el.querySelector('.ailbl').textContent=L['joint_'+k];
   }
@@ -2252,6 +2329,51 @@ function setAppHeight(){
   });
 }
 
+
+// ── PHASE 1 PREMIUM ──────────────────────────────────────────────────────────
+async function sha256hex(str){
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+// Hash of premium password (default: APL2024)
+// To change: python3 -c "import hashlib;print(hashlib.sha256(b'NEWPW').hexdigest())"
+const _PW_HASH='6e9a16337d5d2c2302e87aeba5cae99ee0f5aa2c5c789504285018b53d26e3c9';
+let _pendingPremiumCb=null;
+
+function _setPremium(val){
+  S.premium=val;
+  const badge=$('prm-badge');if(!badge)return;
+  if(val){
+    badge.textContent='PRO';badge.className='pro';
+    try{localStorage.setItem('apl_premium','1');}catch(e){}
+  }else{
+    badge.textContent='FREE';badge.className='free';
+  }
+}
+function _hasPremiumStored(){
+  try{return localStorage.getItem('apl_premium')==='1';}catch(e){return false;}
+}
+function requirePremium(cb){
+  if(S.premium){cb();return;}
+  _pendingPremiumCb=cb;
+  const inp=$('prm-input');if(inp)inp.value='';
+  const err=$('prm-err');if(err)err.classList.remove('on');
+  const mod=$('prm-modal');if(mod)mod.classList.add('on');
+  setTimeout(()=>{if(inp)inp.focus();},100);
+}
+async function _tryUnlock(){
+  const inp=$('prm-input');
+  const pw=inp?inp.value:'';
+  const hash=await sha256hex(pw);
+  if(hash===_PW_HASH){
+    _setPremium(true);
+    const mod=$('prm-modal');if(mod)mod.classList.remove('on');
+    if(_pendingPremiumCb){_pendingPremiumCb();_pendingPremiumCb=null;}
+  }else{
+    const err=$('prm-err');if(err)err.classList.add('on');
+    if(inp){inp.classList.add('shake');setTimeout(()=>inp.classList.remove('shake'),350);inp.select();}
+  }
+}
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init(){
   setAppHeight(); // viewport 높이 즉시 보정
@@ -2277,21 +2399,36 @@ async function init(){
   $('btn-data-open').addEventListener('click',openDataModal);
   $('btn-data-close').addEventListener('click',closeDataModal);
   $('btn-data-copy-all').addEventListener('click',copyAllData);
-  // Joint selection
-  for(const k of ['knee','hip','trunk','spine']){
+  // Joint selection: checkbox.change prevents label double-toggle
+  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     const lbl=$('jsel-'+k);if(!lbl) continue;
     const cb=lbl.querySelector('input');
-    lbl.addEventListener('click',e=>{
-      // toggle
-      const nowChecked=!S.jointSel[k];
-      // require at least 1 joint selected
-      const otherSel=['knee','hip','trunk','spine'].filter(j=>j!==k&&S.jointSel[j]);
-      if(!nowChecked&&!otherSel.length) return; // prevent deselecting all
+    cb.addEventListener('change',()=>{
+      const nowChecked=cb.checked;
+      const otherSel=['knee','hip','trunk','spine','shoulder','elbow'].filter(j=>j!==k&&S.jointSel[j]);
+      if(!nowChecked&&!otherSel.length){cb.checked=true;return;}
       S.jointSel[k]=nowChecked;
-      cb.checked=nowChecked;
       lbl.classList.toggle('active',nowChecked);
     });
   }
+  // Premium modal wiring
+  const _prmBadge=$('prm-badge');
+  if(_prmBadge) _prmBadge.addEventListener('click',()=>{
+    if(S.premium){
+      if(confirm('Lock premium? You will need the password to unlock again.')){
+        _setPremium(false);try{localStorage.removeItem('apl_premium');}catch(e){}
+      }
+    }else{requirePremium(()=>{});}
+  });
+  const _prmConfirm=$('prm-confirm');if(_prmConfirm)_prmConfirm.addEventListener('click',_tryUnlock);
+  const _prmCancel=$('prm-cancel');if(_prmCancel)_prmCancel.addEventListener('click',()=>{
+    $('prm-modal').classList.remove('on');_pendingPremiumCb=null;
+  });
+  const _prmInput=$('prm-input');if(_prmInput)_prmInput.addEventListener('keydown',e=>{
+    if(e.key==='Enter')_tryUnlock();
+    if(e.key==='Escape'){$('prm-modal').classList.remove('on');_pendingPremiumCb=null;}
+  });
+  if(_hasPremiumStored())_setPremium(true);
   $('data-search').addEventListener('input',e=>renderDataList(e.target.value));
   $('data-modal').addEventListener('click',e=>{if(e.target===$('data-modal'))closeDataModal();});
   $('btn-data-del-all').addEventListener('click',deleteAllData);

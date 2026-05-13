@@ -1107,7 +1107,7 @@ function drawFrame(kps,cmp){
 function updateAnglesBar(cmp,rawAngles){
   if(isFrontal()){
     updatePosBar(_lastPos,_lastPosCmp);
-    return; // skip angle bar in frontal mode
+    return;
   }
   for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     const el=$('ai-'+k);if(!el) continue;
@@ -1124,17 +1124,10 @@ function updateAnglesBar(cmp,rawAngles){
     }
   }
 }
-// Zone-entry feedback globals
-let _zoneEntryAt=0;       // timestamp of last false->true zone transition
-let _zoneEntryFbGiven=false; // whether feedback was given for this zone entry
-const _MIN_FB_GAP=3000;   // minimum ms between any feedbacks
-
 function doFeedback(cmp,inZone){
   const now=Date.now(),ov=overall(cmp),PR=TX[CL].PRAISE,FBL=TX[CL].FB;
-
-  if(!inZone) return;  // out of zone: no feedback
-
-  // Praise: only on zone entry, after 400ms confirmation, good pose, no recent praise
+  if(!inZone) return;
+  // Praise on zone entry after 400ms, once per entry
   if(ov==='good'){
     S.goodN++;
     if(S.goodN>=8&&!_zoneEntryFbGiven&&now-_zoneEntryAt>400&&now-S.lastPr>8000&&!S.speak){
@@ -1144,13 +1137,11 @@ function doFeedback(cmp,inZone){
     return;
   }
   S.goodN=0;
-
-  // Corrective feedback: only once per zone entry, after 400ms confirmation, min gap 3s
+  // Corrective: once per zone entry, 400ms stabilisation, min 3s gap
   if(_zoneEntryFbGiven) return;
-  if(now-_zoneEntryAt<400) return;       // wait for pose to stabilize
-  if(now-S.lastFB<_MIN_FB_GAP) return;  // respect minimum gap
-  if(S.speak) return;                    // don't interrupt ongoing speech
-
+  if(now-_zoneEntryAt<400) return;
+  if(now-S.lastFB<_MIN_FB_GAP) return;
+  if(S.speak) return;
   const fb=primaryFB(cmp);if(!fb) return;
   const msgs=FBL[fb.key];if(!msgs) return;
   const msg=msgs[fb.st]||msgs.warn;
@@ -1173,7 +1164,6 @@ async function _runDetection(){
       const kps=poses[0].keypoints;
       _prevKps=_lastKps;_prevKpsTs=_kpsTs;
       _lastKps=kps;_kpsTs=Date.now();
-      // Frontal mode: position analysis
       if(isFrontal()){
         const pos=extractPositions(kps);
         _lastPos=pos;
@@ -1193,8 +1183,6 @@ async function _runDetection(){
       if(inZone){zb.className='on in';zb.textContent=L.zone_in;}
       else{zb.className='on out';zb.textContent=L.zone_out;}
       if(ref) updateRepOsc(angles,ref);
-      // Zone-entry transition detection: must happen BEFORE S.inZone is updated
-      if(inZone && !S.inZone){ _zoneEntryAt=Date.now(); _zoneEntryFbGiven=false; }
       S.inZone=inZone;
       if(S.stats&&inZone&&cmp){
         S.stats.zoneFrames++;
@@ -1212,8 +1200,9 @@ async function _runDetection(){
         chip.className=ov;
         chip.textContent=ov==='good'?L.chip_good:ov==='warn'?L.chip_warn:L.chip_crit;
       }else{chip.className='';}
+      // Zone-entry transition detection: must happen BEFORE S.inZone is updated
+      if(inZone && !S.inZone){ _zoneEntryAt=Date.now(); _zoneEntryFbGiven=false; }
       if(isFrontal()&&_lastPosCmp){
-        // position-mode feedback
         const now2=Date.now();
         if(!posAllGood(_lastPosCmp)&&!_zoneEntryFbGiven&&now2-_zoneEntryAt>400&&now2-S.lastFB>_MIN_FB_GAP&&!S.speak){
           const fb=posFeedbackStr(_lastPosCmp);
@@ -1401,7 +1390,6 @@ async function saveRefFrame(){
   if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
   S.refs[S.ex.id]=angles;
   try{localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));}catch(e){}
-  // Also save position reference for frontal mode
   if(isFrontal()){
     const fpv=$('fp-vid');
     if(fpv){
@@ -1782,8 +1770,7 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
 
 async function startRecording(){
   if(!S.stream&&_srcMode==='camera') return;
-  // 로컬 클로저로 격리 — 다음 startRecording()의 S.recChunks=[] 초기화와
-  // 이번 세션 onstop 간 레이스 컨디션 방지
+  // Local closure — isolated from next session's S.recChunks=[] reset
   const _sessionChunks=[];
   S.recChunks=_sessionChunks;
   // Composite canvas matches exact video resolution — no scaling issues
@@ -2222,7 +2209,6 @@ async function startLive(){
     cdown.classList.remove('on');cnum.style.color='#fff';
   }
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
-  _zoneEntryAt=0;_zoneEntryFbGiven=false;
   resetRepOsc();
   $('rep-num').textContent='0';
   S.live=true;S.lastFB=0;S.lastPr=0;S.goodN=0;S.speak=false;
@@ -2233,7 +2219,6 @@ async function startLive(){
     $('pos-bar').classList.add('on');
     $('abar').classList.remove('on');
     const tw=$('traj-wrap'); if(tw) tw.classList.add('on');
-    // Size canvas
     const tc=$('traj-cvs');
     if(tc&&tc.offsetWidth) tc.width=tc.offsetWidth;
   } else {
@@ -2241,6 +2226,7 @@ async function startLive(){
     $('pos-bar').classList.remove('on');
     const tw=$('traj-wrap'); if(tw) tw.classList.remove('on');
   }
+  _zoneEntryAt=0;_zoneEntryFbGiven=false;
   $('rep-badge').classList.add('on');$('zone-badge').classList.add('on');
   if(!S.refs[S.ex.id])$('no-ref').classList.add('on');
   startRecording(); // audioStream already set, so skips getUserMedia inside
@@ -2503,8 +2489,8 @@ async function _tryUnlock(){
 
 // ── FRONTAL POSITION ANALYSIS ─────────────────────────────────────────────────
 const isFrontal = () => S.dir === 'front' || S.dir === 'back';
-let _posRef = {};         // ex.id → position reference object
-let _posHistory = [];     // [{t, v}] hip shift over time
+let _posRef = {};
+let _posHistory = [];
 let _lastPos = null;
 let _lastPosCmp = null;
 const TRAJ_MS = 8000;
@@ -2517,14 +2503,11 @@ function extractPositions(kps){
   const lAnk=kps[15], rAnk=kps[16], lSh=kps[5], rSh=kps[6];
   if(!ok(lHip)||!ok(rHip)) return null;
   const hipW = Math.abs(lHip.x - rHip.x);
-  if(hipW < 0.04) return null; // person facing sideways
+  if(hipW < 0.04) return null;
   const mHX = (lHip.x + rHip.x) / 2;
   const mAX = (ok(lAnk)&&ok(rAnk)) ? (lAnk.x+rAnk.x)/2 : mHX;
-  // Hip shift: positive = hip center is to image-right of ankle center
   const hipShift = Math.round(((mHX - mAX) / hipW) * 100);
-  // Pelvic tilt: positive = anatomical right hip (kps[12]) is lower on screen
   const pelvicTilt = Math.round(((rHip.y - lHip.y) / hipW) * 100);
-  // Knee offset from ideal hip-ankle line (% of hip width)
   function kneeOff(hip, knee, ank){
     if(!ok(hip)||!ok(knee)||!ok(ank)) return null;
     const dy = hip.y - ank.y;
@@ -2559,26 +2542,22 @@ function posAllGood(cmp){
 
 function posFeedbackStr(cmp){
   if(!cmp) return null;
-  // xFlip: front view → image-right = anatomical-left → flip sign for anatomical feedback
   const xFlip = S.dir==='back' ? 1 : -1;
   const msgs = [];
   const {hipShift, pelvicTilt, lKneeOff, rKneeOff} = cmp;
   if(hipShift&&hipShift.dev!=null&&hipShift.st!=='good'){
-    const d = hipShift.dev * xFlip; // positive → hip too far to anatomical right
+    const d = hipShift.dev * xFlip;
     msgs.push({text: d>0?'골반 좀더 왼쪽으로':'골반 좀더 오른쪽으로', st:hipShift.st});
   }
   if(pelvicTilt&&pelvicTilt.dev!=null&&pelvicTilt.st!=='good'){
-    // positive dev → right hip dropped more than ref
     msgs.push({text: pelvicTilt.dev>0?'오른 골반 올려':'왼 골반 올려', st:pelvicTilt.st});
   }
   if(lKneeOff&&lKneeOff.dev!=null&&lKneeOff.st!=='good'){
-    // lKneeOff positive = knee to image-right; anatomically lateral for left knee in front view (xFlip=-1)
-    // anatomically lateral = lKneeOff * (-xFlip); negative = valgus
     const lat = lKneeOff.dev * (-xFlip);
     msgs.push({text: lat<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로', st:lKneeOff.st});
   }
   if(rKneeOff&&rKneeOff.dev!=null&&rKneeOff.st!=='good'){
-    const lat = rKneeOff.dev * xFlip; // right knee: lateral = to anatomical right = xFlip direction
+    const lat = rKneeOff.dev * xFlip;
     msgs.push({text: lat<0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로', st:rKneeOff.st});
   }
   if(!msgs.length) return null;
@@ -2634,10 +2613,8 @@ function drawTrajGraph(){
   const range = 80;
   const ref = _posRef[S.ex.id];
   const refVal = ref ? ref.hipShift : null;
-  // Center line
   c.beginPath(); c.strokeStyle='rgba(255,255,255,.08)'; c.lineWidth=1;
   c.moveTo(0,H/2); c.lineTo(W,H/2); c.stroke();
-  // Reference line
   if(refVal!=null){
     const ry = H/2 - (Math.max(-range,Math.min(range,refVal))/range)*(H/2-4);
     c.beginPath(); c.strokeStyle='rgba(255,255,255,.3)'; c.lineWidth=1;
@@ -2653,7 +2630,6 @@ function drawTrajGraph(){
     if(first){c.moveTo(sx,sy);first=false;}else c.lineTo(sx,sy);
   }
   c.strokeStyle='#2196F3'; c.lineWidth=2.5; c.lineJoin='round'; c.stroke();
-  // Current dot
   const last = _posHistory[_posHistory.length-1];
   const lx = W - ((now-last.t)/TRAJ_MS)*W;
   const ly = H/2 - (Math.max(-range,Math.min(range,last.v))/range)*(H/2-4);
@@ -2661,13 +2637,11 @@ function drawTrajGraph(){
   c.fillStyle='#2196F3'; c.fill();
 }
 
-// Draw position overlays on camera canvas
 function drawPosOverlay(kps, pos){
   if(!pos) return;
   const ok = p => p && p.score >= CONF;
   const lHip=kps[11], rHip=kps[12], lKnee=kps[13], rKnee=kps[14];
   const lAnk=kps[15], rAnk=kps[16];
-  // Hip shift: dashed vertical line from mid-hip to mid-ankle
   if(ok(lHip)&&ok(rHip)&&ok(lAnk)&&ok(rAnk)){
     const mh = coverXY({x:(lHip.x+rHip.x)/2, y:(lHip.y+rHip.y)/2, score:1});
     const ma = coverXY({x:(lAnk.x+rAnk.x)/2, y:(lAnk.y+rAnk.y)/2, score:1});
@@ -2683,8 +2657,7 @@ function drawPosOverlay(kps, pos){
     ctx.fillStyle='#2196F3'; ctx.fillText(label, mh.x+8, mh.y-4);
     ctx.restore();
   }
-  // Knee alignment deviation lines
-  function drawKneeLine(hip, knee, ank, label){
+  function drawKneeLine(hip, knee, ank){
     if(!ok(hip)||!ok(knee)||!ok(ank)) return;
     const dy = hip.y - ank.y;
     if(Math.abs(dy)<0.02) return;
@@ -2701,21 +2674,23 @@ function drawPosOverlay(kps, pos){
     ctx.lineWidth=3; ctx.lineCap='round'; ctx.stroke();
     ctx.restore();
   }
-  drawKneeLine(lHip,lKnee,lAnk,'L');
-  drawKneeLine(rHip,rKnee,rAnk,'R');
+  drawKneeLine(lHip,lKnee,lAnk);
+  drawKneeLine(rHip,rKnee,rAnk);
 }
 
-// Force camera restart — always stops existing tracks and gets fresh stream.
-// Called on visibilitychange (iOS: tracks stay 'live' but deliver black frames).
+// ── FORCE CAMERA RESTART (replaces _recoverCameraLive) ────────────────────────
+// Always stops existing tracks and gets fresh stream — fixes iOS black frames
+// where tracks appear 'live' but deliver black content after returning from photos.
+async function _recoverCameraLive(){  // kept as alias; real logic below
+  return _forceCameraRestart();
+}
 async function _forceCameraRestart(){
   if(_srcMode!=='camera'||_camBusy||S.caps) return;
   _camBusy=true;
   const wasLive=S.live;
   try{
-    // Stop all existing tracks unconditionally
     if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
     S.stream=null; vid.srcObject=null;
-    // Short pause so iOS camera hardware fully releases
     await new Promise(r=>setTimeout(r,200));
     const stream=await navigator.mediaDevices.getUserMedia({
       video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},
@@ -2730,6 +2705,11 @@ async function _forceCameraRestart(){
   }catch(e){console.error('Force camera restart failed:',e);}
   finally{_camBusy=false;}
 }
+
+// Zone-entry feedback globals
+let _zoneEntryAt=0;
+let _zoneEntryFbGiven=false;
+const _MIN_FB_GAP=3000;
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init(){
@@ -2859,12 +2839,11 @@ async function init(){
     setAppHeight();
     window.addEventListener('resize',()=>{setAppHeight();resizeCam();});
     vid.addEventListener('loadeddata',resizeCam);
-    // Force camera restart whenever app returns to foreground (iOS black-frame fix)
+    // Force camera restart on foreground return (iOS black-frame fix)
     document.addEventListener('visibilitychange',()=>{
       if(document.visibilityState==='visible'){
         setAppHeight();
         if(_srcMode==='camera'){
-          // Always force-restart: iOS returns black frames even when track appears live
           setTimeout(()=>{ if(!S.caps) _forceCameraRestart(); },400);
         } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
       }
@@ -2908,4 +2887,14 @@ async function init(){
     $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
     $('init').classList.add('gone');
     const rb=document.createElement('div');
-    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700
+    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
+    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
+    document.body.appendChild(rb);
+  }
+  speechSynthesis.getVoices();
+}
+
+window.addEventListener('load',init);
+</script>
+</body>
+</html>

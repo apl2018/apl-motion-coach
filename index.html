@@ -1940,38 +1940,57 @@ async function startRecording(){
   }
 
   let compStream;
-  try{compStream=comp.captureStream?comp.captureStream(60):comp.mozCaptureStream(60);}
-  catch(e){
+  const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
+  if(_isIOSCam&&S.stream){
+    // iOS camera: canvas.captureStream() produces 0-byte chunks (known iOS Safari limitation).
+    // Record camera stream directly — skeleton overlay not in video but recording works.
     compStream=new MediaStream(S.stream.getVideoTracks().map(t=>t.clone()));
-  }
-
-  // Audio: _recAudioCtx was pre-created in startLive() within user gesture context (iOS requirement)
-  // If available, wire up priming + mic → _recAudioDest for chime capture in recording
-  try{
-    if(_recAudioCtx&&_recAudioCtx.state!=='closed'){
-      if(!_recAudioDest) _recAudioDest=_recAudioCtx.createMediaStreamDestination();
-      // Priming: brief silent tone to activate MediaStreamDestination stream on iOS
-      const prOsc=_recAudioCtx.createOscillator();
-      const prGain=_recAudioCtx.createGain();
-      prGain.gain.value=0.0001;
-      prOsc.connect(prGain);prGain.connect(_recAudioDest);
-      prOsc.start(_recAudioCtx.currentTime);
-      prOsc.stop(_recAudioCtx.currentTime+0.25);
-      // Mic removed: iOS earpiece routing bug. Coaching text shown as subtitle overlay.
-      if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
-      _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
+  }else{
+    try{compStream=comp.captureStream?comp.captureStream(60):comp.mozCaptureStream(60);}
+    catch(e){
+      compStream=new MediaStream(S.stream?S.stream.getVideoTracks().map(t=>t.clone()):[]);
     }
-  }catch(e){
-    console.warn('RecAudio setup 실패:',e);
-    _recAudioCtx=null;_recAudioDest=null;
-    // (mic not used: see above)
   }
 
-  const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
-  const mime=mimePriority.find(m=>MediaRecorder.isTypeSupported(m))||'video/mp4';
-  try{S.recorder=new MediaRecorder(compStream,{mimeType:mime,videoBitsPerSecond:12000000,audioBitsPerSecond:192000});}
-  catch(e){try{S.recorder=new MediaRecorder(compStream,{videoBitsPerSecond:8000000});}
-           catch(e2){S.recorder=new MediaRecorder(compStream);}}
+  // Audio: skip for iOS camera — AudioContext stream + camera video = MediaRecorder conflict on iOS
+  if(!_isIOSCam){
+    try{
+      if(_recAudioCtx&&_recAudioCtx.state!=='closed'){
+        if(!_recAudioDest) _recAudioDest=_recAudioCtx.createMediaStreamDestination();
+        const prOsc=_recAudioCtx.createOscillator();
+        const prGain=_recAudioCtx.createGain();
+        prGain.gain.value=0.0001;
+        prOsc.connect(prGain);prGain.connect(_recAudioDest);
+        prOsc.start(_recAudioCtx.currentTime);
+        prOsc.stop(_recAudioCtx.currentTime+0.25);
+        if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
+        _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
+      }
+    }catch(e){
+      console.warn('RecAudio setup 실패:',e);
+      _recAudioCtx=null;_recAudioDest=null;
+    }
+  }
+
+  let mime;
+  if(_isIOSCam){
+    // iOS camera: simplest possible MIME — no codec spec, no audio codec
+    const iosMimes=['video/mp4','video/webm'];
+    mime=iosMimes.find(m=>MediaRecorder.isTypeSupported(m))||'';
+    try{S.recorder=mime
+        ?new MediaRecorder(compStream,{mimeType:mime,videoBitsPerSecond:6000000})
+        :new MediaRecorder(compStream,{videoBitsPerSecond:6000000});}
+    catch(e){
+      try{S.recorder=new MediaRecorder(compStream);}
+      catch(e2){console.warn('iOS recorder init failed:',e2);saveRecording([]);return;}
+    }
+  }else{
+    const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+    mime=mimePriority.find(m=>MediaRecorder.isTypeSupported(m))||'video/mp4';
+    try{S.recorder=new MediaRecorder(compStream,{mimeType:mime,videoBitsPerSecond:12000000,audioBitsPerSecond:192000});}
+    catch(e){try{S.recorder=new MediaRecorder(compStream,{videoBitsPerSecond:8000000});}
+             catch(e2){S.recorder=new MediaRecorder(compStream);}}
+  }
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)_sessionChunks.push(e.data);};
   S.recorder.onstop=()=>saveRecording(_sessionChunks);
 
@@ -1987,9 +2006,10 @@ async function startRecording(){
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
-      // No timeslice: ondataavailable fires once on stop() with all data
-      // (timeslice=33ms caused iOS to deliver only 0-byte chunks → empty _sessionChunks)
-      try{S.recorder.start();}catch(e){console.warn('Recorder start:',e);}
+      // iOS camera: 500ms timeslice (no timeslice → empty GOP → no data; 33ms → 0-byte chunks)
+      // Others: no timeslice → single reliable chunk on stop()
+      try{_isIOSCam?S.recorder.start(500):S.recorder.start();}
+      catch(e){console.warn('Recorder start:',e);}
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
       S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
@@ -2521,7 +2541,9 @@ function checkCameraHealth(){
   if(_camBusy){setTimeout(()=>{if(_camBusy){_camBusy=false;checkCameraHealth();}},5000);return;}
   const tracks=S.stream?S.stream.getVideoTracks():[];
   const dead=tracks.length===0||tracks.every(t=>t.readyState==='ended');
-  if(dead||vid.readyState<2){
+  // iOS: muted=true means camera hardware suspended → black frames despite 'live' readyState
+  const muted=tracks.length>0&&tracks.every(t=>t.muted);
+  if(dead||muted||vid.readyState<2){
     restartCamera();
   }else if(vid.paused){
     vid.play().catch(()=>restartCamera());
@@ -3026,9 +3048,12 @@ async function init(){
     const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';
     _pendingSaveBlob=null;_pendingSaveName='';
     setTimeout(()=>{
-      if(_srcMode==='camera') checkCameraHealth();
-      else if(vid.readyState<2||vid.videoWidth===0) restartCamera();
-    },300);
+      if(_srcMode==='camera'){
+        // Use _forceCameraRestart (not checkCameraHealth) — detects muted/black-frame state
+        // even when track.readyState appears 'live' (common after iOS backgrounding)
+        _forceCameraRestart();
+      }else if(vid.readyState<2||vid.videoWidth===0) restartCamera();
+    },400);
   });
   $('btn-sum-save').addEventListener('click',()=>{
     if(!_pendingSaveBlob) return;
@@ -3086,15 +3111,16 @@ async function init(){
     document.addEventListener('visibilitychange',()=>{
       if(document.visibilityState==='visible'){
         setAppHeight();
-        if(_srcMode==='camera'){
-          setTimeout(()=>{ if(!S.caps) _forceCameraRestart(); },600);
-        } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },600);
+        if(_srcMode==='camera'&&!S.live&&!S.caps){
+          // 앱 복귀 시 항상 카메라 재시작 → 초기화면과 동일한 카메라 상태
+          setTimeout(restartCamera,500);
+        } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },300);
       }
     });
     // iOS bfcache: pageshow with persisted=true means page restored from cache
     window.addEventListener('pageshow',e=>{
-      if(e.persisted&&_srcMode==='camera'){
-        setTimeout(()=>{ if(!S.caps) _forceCameraRestart(); },600);
+      if(e.persisted&&_srcMode==='camera'&&!S.live&&!S.caps){
+        setTimeout(restartCamera,500);
       }
     });
     vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera') checkCameraHealth();});

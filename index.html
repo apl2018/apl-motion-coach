@@ -327,6 +327,10 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 .sum-feedback{background:rgba(229,57,53,.08);border:1px solid rgba(229,57,53,.2);
   border-radius:10px;padding:10px 12px;font-size:12px;color:var(--txt2);line-height:1.6}
 .sum-feedback strong{color:var(--red)}
+#btn-sum-save{width:100%;padding:14px;border-radius:12px;border:none;
+  background:linear-gradient(135deg,#2196F3,#1565C0);color:#fff;
+  font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;display:none}
+#btn-sum-save:active{opacity:.8}
 #btn-sum-close{width:100%;padding:14px;border-radius:12px;border:none;
   background:var(--red);color:#fff;font-size:15px;font-weight:700;cursor:pointer}
 #btn-sum-close:active{opacity:.8}
@@ -530,6 +534,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
       </div>
       <div id="sum-info" style="display:flex;flex-direction:column;gap:0"></div>
       <div class="sum-feedback" id="sum-feedback" style="display:none"></div>
+      <button id="btn-sum-save">📥 영상 저장</button>
       <button id="btn-sum-close">확인</button>
     </div>
   </div>
@@ -702,10 +707,10 @@ ko:{flag:'🇰🇷',label:'KO',voice_lang:'ko-KR',
   sum_accuracy:'분석 정확도',sum_excellent:'우수',sum_good_rating:'보통',sum_poor:'개선 필요',
   sum_coaching:'주요 코칭 내용',sum_reps_unit:'회',
   joint_knee:'무릎',joint_hip:'고관절',joint_trunk:'몸통',joint_spine:'척추',joint_shoulder:'어깨',joint_elbow:'팔꿈치',
-  voice_start:' 분석 시작.',voice_stop:'운동 끝! 수고했어.',
-  voice_ref_saved:'기준 자세 저장됐어.',
-  voice_ref_fail:'자세 인식 실패. 다시 해봐.',
-  voice_ref_full:'전신이 보이게 서 있어.',
+  voice_start:' 분석을 시작합니다.',voice_stop:'분석이 종료되었습니다. 수고하셨습니다.',
+  voice_ref_saved:'기준 자세가 저장되었습니다.',
+  voice_ref_fail:'자세 인식에 실패했습니다. 다시 시도해 주세요.',
+  voice_ref_full:'전신이 보이도록 서 주세요.',
   model_ready:'AI 준비완료',model_fail:'로드 실패',mdl_loading:'로딩 중',
   PRAISE:['완벽해!','아주 좋아!','훌륭해!','자세 좋아!'],
   FB:{
@@ -1130,7 +1135,7 @@ function doFeedback(cmp,inZone){
   // Praise on zone entry after 400ms, once per entry
   if(ov==='good'){
     S.goodN++;
-    if(S.goodN>=8&&!_zoneEntryFbGiven&&now-_zoneEntryAt>400&&now-S.lastPr>8000&&!S.speak){
+    if(S.goodN>=8&&_zoneEntryAt>0&&!_zoneEntryFbGiven&&now-_zoneEntryAt>400&&now-S.lastPr>8000&&!S.speak){
       speak(PR[Math.floor(Math.random()*PR.length)]);
       S.lastPr=now;S.goodN=0;_zoneEntryFbGiven=true;
     }
@@ -1138,6 +1143,7 @@ function doFeedback(cmp,inZone){
   }
   S.goodN=0;
   // Corrective: once per zone entry, 400ms stabilisation, min 3s gap
+  if(_zoneEntryAt===0) return;     // zone never properly entered; wait for real entry
   if(_zoneEntryFbGiven) return;
   if(now-_zoneEntryAt<400) return;
   if(now-S.lastFB<_MIN_FB_GAP) return;
@@ -1221,7 +1227,7 @@ async function _runDetection(){
 
       if(isFrontal()&&_lastPosCmp){
         const now2=Date.now();
-        if(feedInZone&&!_zoneEntryFbGiven&&now2-_zoneEntryAt>400&&now2-S.lastFB>_MIN_FB_GAP&&!S.speak){
+        if(feedInZone&&_zoneEntryAt>0&&!_zoneEntryFbGiven&&now2-_zoneEntryAt>400&&now2-S.lastFB>_MIN_FB_GAP&&!S.speak){
           const fb=posFeedbackStr(_lastPosCmp);
           if(fb){
             speak(fb);S.lastFB=now2;_zoneEntryFbGiven=true;
@@ -1963,16 +1969,10 @@ function saveRecording(chunks){
   const exName=S.ex.name;
   const fname=`APL_${exName}_${stamp}.${ext}`;
   const file=new File([blob],fname,{type:saveMime,lastModified:Date.now()});
-  // 모바일(iOS/Android)에서만 share sheet — 데스크톱은 바로 다운로드
-  const _isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  if(_isMobile&&navigator.canShare&&navigator.canShare({files:[file]})){
-    navigator.share({files:[file],title:'APL Motion Coach',text:exName})
-      .catch(err=>{if(err.name!=='AbortError')downloadVideo(blob,fname);})
-      .finally(()=>{setTimeout(()=>{if(_srcMode==='camera')checkCameraHealth();},800);});
-  }else{
-    downloadVideo(blob,fname);
-    setTimeout(()=>{if(_srcMode==='camera')checkCameraHealth();},800);
-  }
+  // Store blob for user-gesture share (navigator.share requires user gesture on iOS)
+  _pendingSaveBlob=blob;_pendingSaveName=fname;
+  const _saveBtn=$('btn-sum-save');
+  if(_saveBtn){_saveBtn.style.display='block';_saveBtn.textContent='📥 영상 저장';}
 }
 function downloadVideo(blob,fname){
   const url=URL.createObjectURL(blob);
@@ -2721,9 +2721,13 @@ async function _forceCameraRestart(){
     const newStream=await navigator.mediaDevices.getUserMedia({
       video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},
       audio:false});
-    // Now it is safe to stop the old tracks (new stream already active)
+    // Stop old tracks after acquiring new stream
     if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
-    S.stream=newStream; vid.srcObject=newStream;
+    S.stream=newStream;
+    // iOS: null srcObject first then reassign forces full hardware rebind
+    vid.srcObject=null;
+    await new Promise(r=>setTimeout(r,80));
+    vid.srcObject=newStream;
     await waitForVideo(3000);
     await vid.play().catch(()=>{});
     vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
@@ -2739,6 +2743,8 @@ async function _forceCameraRestart(){
 let _zoneEntryAt=0;
 let _zoneEntryFbGiven=false;
 const _MIN_FB_GAP=3000;
+let _pendingSaveBlob=null;   // recorded video blob waiting for user-gesture share
+let _pendingSaveName='';
 let _feedZone=false;       // current feed-zone state (for transition detection)
 let _hasExitedZone=false;  // true once user has left zone; required before re-entry triggers feedback
 
@@ -2853,11 +2859,28 @@ async function init(){
   $('btn-flip-hdr').addEventListener('click',switchCamera);
   $('btn-sum-close').addEventListener('click',()=>{
     $('summary').classList.remove('on');
-    // Camera recovery: checkCameraHealth for camera mode, restartCamera if still black in file mode
+    const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';
+    _pendingSaveBlob=null;_pendingSaveName='';
     setTimeout(()=>{
       if(_srcMode==='camera') checkCameraHealth();
       else if(vid.readyState<2||vid.videoWidth===0) restartCamera();
     },300);
+  });
+  $('btn-sum-save').addEventListener('click',()=>{
+    if(!_pendingSaveBlob) return;
+    const blob=_pendingSaveBlob, fname=_pendingSaveName;
+    const file=new File([blob],fname,{type:blob.type,lastModified:Date.now()});
+    const _isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if(_isMobile&&navigator.canShare&&navigator.canShare({files:[file]})){
+      navigator.share({files:[file],title:'APL Motion Coach',text:fname})
+        .then(()=>{_pendingSaveBlob=null;_pendingSaveName='';
+          const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';})
+        .catch(err=>{if(err.name!=='AbortError')downloadVideo(blob,fname);});
+    }else{
+      downloadVideo(blob,fname);
+      _pendingSaveBlob=null;_pendingSaveName='';
+      const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';
+    }
   });
 
   $('i-msg').textContent='카메라 시작 중...';

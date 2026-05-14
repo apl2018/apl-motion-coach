@@ -1966,9 +1966,7 @@ async function startRecording(){
     }
   }
 
-  // Audio: iOS 포함 전체 플랫폼 AudioContext 라우팅
-  // (차임음 등 AudioContext 소리가 녹화에 담김)
-  // iOS는 mic 활성화 시 TTS가 스피커에서 사라지므로 mic 사용 안 함
+  // Audio: AudioContext 라우팅 (차임 등) + 마이크(피드백 음성 캡처)
   try{
     if(_recAudioCtx&&_recAudioCtx.state!=='closed'){
       if(!_recAudioDest) _recAudioDest=_recAudioCtx.createMediaStreamDestination();
@@ -1978,8 +1976,21 @@ async function startRecording(){
       prOsc.connect(prGain);prGain.connect(_recAudioDest);
       prOsc.start(_recAudioCtx.currentTime);
       prOsc.stop(_recAudioCtx.currentTime+0.25);
+      // 마이크 → AudioContext → 녹화 (echoCancellation:false로 TTS 음성 억제 없음)
+      if(S.audioStream){
+        try{
+          const micSrc=_recAudioCtx.createMediaStreamSource(S.audioStream);
+          const micGain=_recAudioCtx.createGain();
+          micGain.gain.value=2.0; // 마이크 볼륨 증폭
+          micSrc.connect(micGain);micGain.connect(_recAudioDest);
+        }catch(e){console.warn('micSrc 연결 실패:',e);}
+      }
       if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
       _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
+    }
+    // fallback: AudioContext 없을 때 마이크 트랙 직접 추가
+    if(S.audioStream&&_recAudioDest===null){
+      S.audioStream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t.clone());}catch(e){}});
     }
   }catch(e){
     console.warn('RecAudio setup 실패:',e);
@@ -2063,6 +2074,8 @@ function stopRecording(){
     }
     else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording(S.recChunks);
   }
+  // audioStream 정리 (녹화 종료 후)
+  if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;}
   // Delay AudioContext close to 3s — gives recorder.onstop time to fire and encode audio
   setTimeout(()=>{
     if(_recAudioCtx){_recAudioCtx.close().catch(()=>{});_recAudioCtx=null;_recAudioDest=null;}
@@ -2437,9 +2450,14 @@ async function startLive(){
   // ② TTS 사전 활성화 — 제스처 컨텍스트 내(await 전)에서 호출해야 iOS에서 동작
   try{const _w=new SpeechSynthesisUtterance('');speechSynthesis.speak(_w);speechSynthesis.cancel();}catch(e){}
 
-  // ③ 마이크 비활성화 — 마이크 활성화 시 iOS가 TTS를 이어폰 단자로 라우팅
-  //    → TTS가 스피커로 나오지 않아 녹화에 담기지 않음. 자막 오버레이로 대체.
-  // (mic recording removed: subtitle overlay in video shows all coaching text)
+  // ③ 마이크 요청 — await 없이 .then()으로 비동기 (TTS 사전활성화 후 요청해야 iOS에서 라우팅 간섭 없음)
+  //    echoCancellation:false → 스피커로 나오는 TTS 피드백 음성을 마이크가 억제하지 않고 캡처
+  if(!S.audioStream){
+    navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1},
+      video:false
+    }).then(s=>{S.audioStream=s;}).catch(e=>console.warn('Mic denied:',e));
+  }
 
   // ⑤ Countdown (camera mode) or play file (file mode)
   const cdown=$('cdown'),cnum=$('cnum');

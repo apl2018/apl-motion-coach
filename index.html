@@ -1987,7 +1987,9 @@ async function startRecording(){
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
-      try{S.recorder.start(33);}catch(e){console.warn('Recorder start:',e);}
+      // No timeslice: ondataavailable fires once on stop() with all data
+      // (timeslice=33ms caused iOS to deliver only 0-byte chunks → empty _sessionChunks)
+      try{S.recorder.start();}catch(e){console.warn('Recorder start:',e);}
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
       S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
@@ -2012,14 +2014,18 @@ function stopRecording(){
   const _fallbackChunks=S.recChunks;
   if(S.recorder){
     if(S.recorder.state==='recording'||S.recorder.state==='paused'){
+      // requestData() flushes buffered frames before stop — essential for no-timeslice mode
+      try{S.recorder.requestData();}catch(e){}
       S.recorder.stop();
-      // Fallback: if onstop doesn't fire within 2.5s (iOS canvas.captureStream quirk),
-      // manually call saveRecording so the save button always appears
+      // Fallback: if onstop doesn't fire within 4s, call saveRecording directly
+      // Extended from 2.5s → 4s for no-timeslice recordings (larger single chunk)
       setTimeout(()=>{
         if(!_pendingSaveBlob&&_fallbackChunks&&_fallbackChunks.length>0){
           saveRecording(_fallbackChunks);
+        } else if(!_pendingSaveBlob){
+          saveRecording([]); // show error button so user knows what happened
         }
-      },2500);
+      },4000);
     }
     else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording(S.recChunks);
   }
@@ -2030,7 +2036,17 @@ function stopRecording(){
   },3000);
 }
 function saveRecording(chunks){
-  if(!chunks||!chunks.length) return;
+  if(!chunks||!chunks.length){
+    // Chunks empty: codec/stream issue on this device. Show error instead of silent failure.
+    const _sb=$('btn-sum-save');
+    if(_sb&&_sb.style.display==='none'){
+      _sb.style.display='block';
+      _sb.textContent='⚠️ 녹화 저장 실패 (기기 미지원)';
+      _sb.style.background='rgba(120,120,120,.6)';
+      _sb.style.pointerEvents='none';
+    }
+    return;
+  }
   const recMime=S.recorder&&S.recorder.mimeType?S.recorder.mimeType:'video/mp4';
   const isMP4=recMime.includes('mp4');
   const ext=isMP4?'mp4':'webm';
@@ -2848,43 +2864,37 @@ async function _forceCameraRestart(){
   const wasLive=S.live;
   // Stop rAF during restart
   if(S.raf){cancelAnimationFrame(S.raf);S.raf=null;}
-
-  // ── Mirror switchCamera pattern exactly (same facingMode, different order) ──
-  // Get new stream FIRST (iOS: stop-first → camera hardware releases → black frames)
-  let newStream=null;
-  const tries=[
-    {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false},
-    {video:{facingMode:{ideal:S.facingMode},width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}},audio:false},
-    {video:{facingMode:S.facingMode},audio:false},
-    {video:true,audio:false},
-  ];
-  for(const c of tries){
-    try{newStream=await navigator.mediaDevices.getUserMedia(c);break;}
-    catch(e){console.warn('CamRestart attempt:',e.message);}
-  }
-
-  if(!newStream){
-    // All attempts failed — let health-check retry after 3s
-    _camBusy=false;
+  try{
+    // ── Mirror switchCamera pattern exactly ──
+    // Get new stream FIRST (iOS: stop-first → hardware releases → black frames)
+    let newStream=null;
+    const tries=[
+      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false},
+      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}},audio:false},
+      {video:{facingMode:S.facingMode},audio:false},
+      {video:true,audio:false},
+    ];
+    for(const c of tries){
+      try{newStream=await navigator.mediaDevices.getUserMedia(c);break;}
+      catch(e){console.warn('CamRestart attempt:',e.message);}
+    }
+    if(!newStream){
+      if(wasLive){S.raf=requestAnimationFrame(loop);}
+      return;
+    }
+    if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
+    S.stream=newStream;
+    vid.srcObject=newStream;
+    vid.load(); // iOS hardware rebind
+    try{await waitForVideo(3000);}catch(e){console.warn('waitForVideo timeout');}
+    await vid.play().catch(()=>{});
+    vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
+    cvs.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
+    resizeCam();
     if(wasLive){S.raf=requestAnimationFrame(loop);}
-    return;
+  }finally{
+    _camBusy=false; // ALWAYS release — prevents permanent lock on any failure
   }
-
-  // Stop old tracks AFTER getting new stream
-  if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
-  S.stream=newStream;
-
-  // Apply new stream — exact same sequence as switchCamera (no null step)
-  vid.srcObject=newStream;
-  vid.load(); // forces iOS hardware rebind — this is what makes switchCamera work
-  try{await waitForVideo(3000);}catch(e){console.warn('waitForVideo timeout');}
-  await vid.play().catch(()=>{});
-
-  vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
-  cvs.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
-  resizeCam();
-  if(wasLive){S.raf=requestAnimationFrame(loop);}
-  _camBusy=false;
 }
 
 // Zone-entry feedback globals

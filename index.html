@@ -1942,8 +1942,17 @@ async function startRecording(){
   let compStream;
   const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
   if(_isIOSCam&&S.stream){
-    // iOS camera: use S.stream DIRECTLY — no clone, no wrapping (most primitive, most reliable)
-    compStream=S.stream;
+    // iOS: comp.captureStream(30) 시도 — no-timeslice 방식으로 빈 청크 문제 해결됨
+    // 성공 시: 스켈레톤+코칭텍스트+30fps 녹화
+    // 실패 시: raw 카메라 24fps fallback (S.stream 비디오 트랙만)
+    try{
+      compStream=comp.captureStream?comp.captureStream(30):null;
+      if(!compStream||compStream.getVideoTracks().length===0)throw new Error('no video tracks');
+      console.log('[iOS] canvas captureStream OK');
+    }catch(e){
+      console.warn('[iOS] canvas captureStream failed, S.stream fallback:',e.message);
+      compStream=new MediaStream(S.stream.getVideoTracks());
+    }
   }else{
     try{compStream=comp.captureStream?comp.captureStream(60):comp.mozCaptureStream(60);}
     catch(e){
@@ -1951,24 +1960,24 @@ async function startRecording(){
     }
   }
 
-  // Audio: skip for iOS camera — AudioContext stream + camera video = MediaRecorder conflict on iOS
-  if(!_isIOSCam){
-    try{
-      if(_recAudioCtx&&_recAudioCtx.state!=='closed'){
-        if(!_recAudioDest) _recAudioDest=_recAudioCtx.createMediaStreamDestination();
-        const prOsc=_recAudioCtx.createOscillator();
-        const prGain=_recAudioCtx.createGain();
-        prGain.gain.value=0.0001;
-        prOsc.connect(prGain);prGain.connect(_recAudioDest);
-        prOsc.start(_recAudioCtx.currentTime);
-        prOsc.stop(_recAudioCtx.currentTime+0.25);
-        if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
-        _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
-      }
-    }catch(e){
-      console.warn('RecAudio setup 실패:',e);
-      _recAudioCtx=null;_recAudioDest=null;
+  // Audio: iOS 포함 전체 플랫폼 AudioContext 라우팅
+  // (차임음 등 AudioContext 소리가 녹화에 담김)
+  // iOS는 mic 활성화 시 TTS가 스피커에서 사라지므로 mic 사용 안 함
+  try{
+    if(_recAudioCtx&&_recAudioCtx.state!=='closed'){
+      if(!_recAudioDest) _recAudioDest=_recAudioCtx.createMediaStreamDestination();
+      const prOsc=_recAudioCtx.createOscillator();
+      const prGain=_recAudioCtx.createGain();
+      prGain.gain.value=0.0001;
+      prOsc.connect(prGain);prGain.connect(_recAudioDest);
+      prOsc.start(_recAudioCtx.currentTime);
+      prOsc.stop(_recAudioCtx.currentTime+0.25);
+      if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
+      _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
     }
+  }catch(e){
+    console.warn('RecAudio setup 실패:',e);
+    _recAudioCtx=null;_recAudioDest=null;
   }
 
   let mime;
@@ -2043,7 +2052,6 @@ function stopRecording(){
     }
     else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording(S.recChunks);
   }
-  // (S.audioStream not used)
   // Delay AudioContext close to 3s — gives recorder.onstop time to fire and encode audio
   setTimeout(()=>{
     if(_recAudioCtx){_recAudioCtx.close().catch(()=>{});_recAudioCtx=null;_recAudioDest=null;}

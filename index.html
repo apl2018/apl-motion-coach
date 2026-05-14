@@ -1875,9 +1875,15 @@ async function startRecording(){
   // Local closure — isolated from next session's S.recChunks=[] reset
   const _sessionChunks=[];
   S.recChunks=_sessionChunks;
-  // Composite canvas matches exact video resolution — no scaling issues
-  const cw=vid.videoWidth||$('cam-wrap').offsetWidth||720;
-  const ch=vid.videoHeight||$('cam-wrap').offsetHeight||960;
+  // Composite canvas: max 1280px on longest side → smaller file, higher fps
+  // (원본 해상도 그대로 시 1320×2868=380만 픽셀 → 드로잉 느림)
+  {
+    const _REC_MAX=1280;
+    var _rawW=vid.videoWidth||$('cam-wrap').offsetWidth||720;
+    var _rawH=vid.videoHeight||$('cam-wrap').offsetHeight||960;
+    var _s=Math.max(_rawW,_rawH)>_REC_MAX?_REC_MAX/Math.max(_rawW,_rawH):1;
+    var cw=Math.round(_rawW*_s), ch=Math.round(_rawH*_s);
+  }
   const comp=document.createElement('canvas');
   comp.width=cw;comp.height=ch;
   const compCtx=comp.getContext('2d');
@@ -2004,8 +2010,13 @@ async function startRecording(){
   // (eliminates 0~0.12s black/intro issue at start of saved video)
   // Use RAF for display-sync drawing (replaces setInterval)
   _compDrawing=true; // already set above
-  // setInterval(33ms) = stable 30fps independent of rAF throttling during TF.js inference
-  _drawRafId=setInterval(drawComp,33);
+  // rAF draw loop: MoveNet await 사이에 실행되어 실제 fps 향상
+  // captureStream(30)이 자동으로 30fps로 제한하므로 60fps로 요청해도 OK
+  (function _rafDraw(){
+    if(!_compDrawing)return;
+    drawComp();
+    _drawRafId=requestAnimationFrame(_rafDraw);
+  })();
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
@@ -2030,7 +2041,7 @@ function stopRecording(){
   _coachOverlay=null;
   _introUntil=0;
   if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;} // cancel delayed start if still pending
-  if(_drawRafId){clearInterval(_drawRafId);_drawRafId=null;}
+  if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
   if(S.drawCompInterval&&S.drawCompInterval!==1){clearInterval(S.drawCompInterval);}
   S.drawCompInterval=null;
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}

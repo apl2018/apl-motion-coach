@@ -148,9 +148,9 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #succ.on{display:flex}
 #succ span{font-size:80px;color:#fff}
 #abar{position:absolute;top:50%;right:0;transform:translateY(-50%);
-  background:rgba(8,8,18,.82);display:none;flex-direction:column;
+  background:rgba(8,8,18,.90);display:none;flex-direction:column;
   gap:3px;padding:6px 5px;border-radius:10px 0 0 10px;
-  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:10}
 #abar.on{display:flex}
 .ai{display:flex;flex-direction:column;align-items:center;gap:1px;
   background:rgba(255,255,255,.05);border-radius:6px;padding:5px 6px;width:44px}
@@ -1058,8 +1058,12 @@ function speak(txt){
   const kv=_voices.find(v=>v.lang.startsWith(lc));
   if(kv) u.voice=kv;
   u.onend=u.onerror=()=>{S.speak=false;};
-  // Safety timeout: iOS often doesn't fire onend — release lock after estimated duration
-  setTimeout(()=>{S.speak=false;},Math.max(txt.length*110,3200));
+  // Safety: iOS often misses onend — poll speaking state + hard cap
+  // Korean TTS ~200ms/char; hard cap = 8s max
+  const _spkPoll=setInterval(()=>{
+    if(!speechSynthesis.speaking){S.speak=false;clearInterval(_spkPoll);}
+  },300);
+  setTimeout(()=>{S.speak=false;clearInterval(_spkPoll);},Math.max(txt.length*200,8000));
   speechSynthesis.speak(u);
 }
 
@@ -1206,17 +1210,25 @@ async function _runDetection(){
       }else{chip.className='';}
       S.inZone=inZone;
 
-      if(isFrontal()&&_lastPosCmp){
+      if(isFrontal()){
         // Frontal: time-based corrective feedback (no zone requirement)
         const now2=Date.now();
         if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak){
-          if(!posAllGood(_lastPosCmp)){
-            const fb=posFeedbackStr(_lastPosCmp);
-            if(fb){speak(fb);S.lastFB=now2;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
-          } else if(now2-S.lastPr>9000){
-            const PR=TX[CL].PRAISE;
-            speak(PR[Math.floor(Math.random()*PR.length)]);
-            S.lastPr=now2;
+          let fb=null;
+          if(_lastPosCmp&&!posAllGood(_lastPosCmp)){
+            // Has position reference → compare against saved reference
+            fb=posFeedbackStr(_lastPosCmp);
+          } else if(!_lastPosCmp&&_lastPos){
+            // No reference yet → absolute threshold check (hipShift±25, pelvicTilt±18)
+            fb=posAbsFeedback(_lastPos);
+          }
+          if(fb){speak(fb);S.lastFB=now2;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
+          else if((_lastPosCmp&&posAllGood(_lastPosCmp))||(!_lastPosCmp&&_lastPos)){
+            if(now2-S.lastPr>9000){
+              const PR=TX[CL].PRAISE;
+              speak(PR[Math.floor(Math.random()*PR.length)]);
+              S.lastPr=now2;
+            }
           }
         }
       } else if(cmp) doFeedback(cmp,inZone);
@@ -1835,11 +1847,10 @@ async function startRecording(){
   const compCtx=comp.getContext('2d');
   S.compCanvas=comp;
 
-  // Draw composite at 30fps using setInterval (more consistent than RAF under TF.js load)
+  // Draw composite at 30fps using setInterval (consistent under TF.js load, no throttle)
   _compDrawing=true;
   function drawComp(){
-    if(!_compDrawing){_drawRafId=null;return;}
-    _drawRafId=requestAnimationFrame(drawComp);
+    if(!_compDrawing) return;
     compCtx.clearRect(0,0,cw,ch);
     // ── APL intro logo (first 2.5 s of recording) ──────────────────────────
     // Draw raw video at exact video resolution (sc=1, no offset)
@@ -1942,9 +1953,9 @@ async function startRecording(){
   // Start draw loop immediately; delay recorder.start() 200ms so first recorded frame is clean live video
   // (eliminates 0~0.12s black/intro issue at start of saved video)
   // Use RAF for display-sync drawing (replaces setInterval)
-  _compDrawing=true; // already set above but ensure it's true
-  S.drawCompInterval=1; // placeholder (actual RAF managed via _drawRafId)
-  _drawRafId=requestAnimationFrame(drawComp);
+  _compDrawing=true; // already set above
+  // setInterval(33ms) = stable 30fps independent of rAF throttling during TF.js inference
+  _drawRafId=setInterval(drawComp,33);
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
@@ -1965,20 +1976,30 @@ function stopRecording(){
   _coachOverlay=null;
   _introUntil=0;
   if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;} // cancel delayed start if still pending
-  if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
+  if(_drawRafId){clearInterval(_drawRafId);_drawRafId=null;}
   if(S.drawCompInterval&&S.drawCompInterval!==1){clearInterval(S.drawCompInterval);}
   S.drawCompInterval=null;
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}
   $('rec-dot').classList.remove('on');$('rec-time').classList.remove('on');
+  const _fallbackChunks=S.recChunks;
   if(S.recorder){
-    if(S.recorder.state==='recording'||S.recorder.state==='paused')S.recorder.stop();
+    if(S.recorder.state==='recording'||S.recorder.state==='paused'){
+      S.recorder.stop();
+      // Fallback: if onstop doesn't fire within 2.5s (iOS canvas.captureStream quirk),
+      // manually call saveRecording so the save button always appears
+      setTimeout(()=>{
+        if(!_pendingSaveBlob&&_fallbackChunks&&_fallbackChunks.length>0){
+          saveRecording(_fallbackChunks);
+        }
+      },2500);
+    }
     else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording(S.recChunks);
   }
   if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;}
-  // recorder.stop() → saveRecording 완료 후 AudioContext 닫기
+  // Delay AudioContext close to 3s — gives recorder.onstop time to fire and encode audio
   setTimeout(()=>{
     if(_recAudioCtx){_recAudioCtx.close().catch(()=>{});_recAudioCtx=null;_recAudioDest=null;}
-  },800);
+  },3000);
 }
 function saveRecording(chunks){
   if(!chunks||!chunks.length) return;
@@ -2583,6 +2604,22 @@ function comparePos(pos, ref){
   return r;
 }
 
+function posAbsFeedback(pos){
+  // Fires when no position reference is saved; checks absolute alignment
+  if(!pos) return null;
+  const ABS={hipShift:25,pelvicTilt:18,lKneeOff:22,rKneeOff:22};
+  const msgs=[];
+  if(pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift)
+    msgs.push({text:pos.hipShift>0?'골반 좀더 왼쪽으로':'골반 좀더 오른쪽으로',v:Math.abs(pos.hipShift)});
+  if(pos.pelvicTilt!=null&&Math.abs(pos.pelvicTilt)>ABS.pelvicTilt)
+    msgs.push({text:pos.pelvicTilt>0?'오른 골반 올려':'왼 골반 올려',v:Math.abs(pos.pelvicTilt)});
+  if(pos.lKneeOff!=null&&Math.abs(pos.lKneeOff)>ABS.lKneeOff)
+    msgs.push({text:pos.lKneeOff<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로',v:Math.abs(pos.lKneeOff)});
+  if(pos.rKneeOff!=null&&Math.abs(pos.rKneeOff)>ABS.rKneeOff)
+    msgs.push({text:pos.rKneeOff>0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로',v:Math.abs(pos.rKneeOff)});
+  if(!msgs.length) return null;
+  return msgs.sort((a,b)=>b.v-a.v)[0].text;
+}
 function posAllGood(cmp){
   if(!cmp) return false;
   return ['hipShift','pelvicTilt','lKneeOff','rKneeOff'].every(k=>!cmp[k]||cmp[k].st==='good'||cmp[k].st==='unk');
@@ -2751,6 +2788,7 @@ async function _forceCameraRestart(){
     vid.srcObject=null;
     await new Promise(r=>setTimeout(r,80));
     vid.srcObject=newStream;
+    vid.load(); // matches switchCamera — forces iOS hardware rebind
     await waitForVideo(3000);
     await vid.play().catch(()=>{});
     vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';

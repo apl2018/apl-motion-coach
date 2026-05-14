@@ -1135,6 +1135,8 @@ function updateAnglesBar(cmp,rawAngles){
     }
   }
 }
+const _FB_INTERVAL=2500; // ms between corrective feedback messages
+const _START_DELAY=1500;  // ms startup grace before first feedback fires
 function doFeedback(cmp,inZone){
   const now=Date.now(),ov=overall(cmp),PR=TX[CL].PRAISE,FBL=TX[CL].FB;
   // inZone is NOT a gate — feedback fires on time interval regardless of pose state
@@ -1794,7 +1796,8 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
     }
   }
   // ── Angle panel on right side of recording (mirrors on-screen #abar) ──────
-  {
+  // Only show for side view — frontal uses position metrics (pos-bar), not angles
+  if(!isFrontal()){
     const KEYS=['knee','hip','trunk','spine','shoulder','elbow'];
     const LBLS=['무릎','고관절','몸통','경추','어깨','팔꿈치'];
     const s=compH/960; // scale factor: design base = 960px height
@@ -1921,22 +1924,14 @@ async function startRecording(){
       prOsc.connect(prGain);prGain.connect(_recAudioDest);
       prOsc.start(_recAudioCtx.currentTime);
       prOsc.stop(_recAudioCtx.currentTime+0.25);
-      // Mic gain 1.0 — captures ambient audio including coaching voice from speaker
-      if(S.audioStream){
-        const micSrc=_recAudioCtx.createMediaStreamSource(S.audioStream);
-        const micGain=_recAudioCtx.createGain();
-        micGain.gain.value=1.0;
-        micSrc.connect(micGain);micGain.connect(_recAudioDest);
-      }
+      // Mic removed: iOS earpiece routing bug. Coaching text shown as subtitle overlay.
       if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
       _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
     }
   }catch(e){
     console.warn('RecAudio setup 실패:',e);
     _recAudioCtx=null;_recAudioDest=null;
-    if(S.audioStream){
-      S.audioStream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t.clone());}catch(e2){}});
-    }
+    // (mic not used: see above)
   }
 
   const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
@@ -1995,7 +1990,7 @@ function stopRecording(){
     }
     else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording(S.recChunks);
   }
-  if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;}
+  // (S.audioStream not used)
   // Delay AudioContext close to 3s — gives recorder.onstop time to fire and encode audio
   setTimeout(()=>{
     if(_recAudioCtx){_recAudioCtx.close().catch(()=>{});_recAudioCtx=null;_recAudioDest=null;}
@@ -2249,13 +2244,9 @@ async function startLive(){
   // ② TTS 사전 활성화 — 제스처 컨텍스트 내(await 전)에서 호출해야 iOS에서 동작
   try{const _w=new SpeechSynthesisUtterance('');speechSynthesis.speak(_w);speechSynthesis.cancel();}catch(e){}
 
-  // ③ 마이크 권한 — 비동기 요청 (await 안함: 카운트다운/TTS 차단 방지)
-  if(!S.audioStream){
-    navigator.mediaDevices.getUserMedia({
-      audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1},
-      video:false
-    }).then(s=>{S.audioStream=s;}).catch(e=>console.warn('Mic denied:',e));
-  }
+  // ③ 마이크 비활성화 — 마이크 활성화 시 iOS가 TTS를 이어폰 단자로 라우팅
+  //    → TTS가 스피커로 나오지 않아 녹화에 담기지 않음. 자막 오버레이로 대체.
+  // (mic recording removed: subtitle overlay in video shows all coaching text)
 
   // ⑤ Countdown (camera mode) or play file (file mode)
   const cdown=$('cdown'),cnum=$('cnum');
@@ -2402,7 +2393,9 @@ function buildExChips(){
     if(S.refs[ex.id]){const d=document.createElement('div');d.className='sdot';c.appendChild(d);}
     c.addEventListener('click',()=>{
       if(S.live||S.caps) return;
-      S.ex=ex;S.dir=ex.cam;
+      S.ex=ex;
+      // Do NOT set S.dir=ex.cam — all exercises default cam:'left' which would
+      // override the user's explicitly chosen direction (front/back/left/right)
       document.querySelectorAll('.dirbtn').forEach(b=>b.classList.toggle('on',b.dataset.d===ex.cam));
       buildExChips();updateRefUI();
     });

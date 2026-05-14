@@ -1942,9 +1942,8 @@ async function startRecording(){
   let compStream;
   const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
   if(_isIOSCam&&S.stream){
-    // iOS camera: canvas.captureStream() produces 0-byte chunks (known iOS Safari limitation).
-    // Record camera stream directly — skeleton overlay not in video but recording works.
-    compStream=new MediaStream(S.stream.getVideoTracks().map(t=>t.clone()));
+    // iOS camera: use S.stream DIRECTLY — no clone, no wrapping (most primitive, most reliable)
+    compStream=S.stream;
   }else{
     try{compStream=comp.captureStream?comp.captureStream(60):comp.mozCaptureStream(60);}
     catch(e){
@@ -1974,16 +1973,11 @@ async function startRecording(){
 
   let mime;
   if(_isIOSCam){
-    // iOS camera: simplest possible MIME — no codec spec, no audio codec
-    const iosMimes=['video/mp4','video/webm'];
-    mime=iosMimes.find(m=>MediaRecorder.isTypeSupported(m))||'';
-    try{S.recorder=mime
-        ?new MediaRecorder(compStream,{mimeType:mime,videoBitsPerSecond:6000000})
-        :new MediaRecorder(compStream,{videoBitsPerSecond:6000000});}
-    catch(e){
-      try{S.recorder=new MediaRecorder(compStream);}
-      catch(e2){console.warn('iOS recorder init failed:',e2);saveRecording([]);return;}
-    }
+    // iOS camera: ZERO OPTIONS — let Safari pick codec, bitrate, everything
+    // Any option can silently break recording on some iOS versions
+    try{S.recorder=new MediaRecorder(compStream);}
+    catch(e){console.warn('iOS recorder init failed:',e);saveRecording([]);return;}
+    mime=S.recorder.mimeType||'video/mp4';
   }else{
     const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
     mime=mimePriority.find(m=>MediaRecorder.isTypeSupported(m))||'video/mp4';
@@ -2006,9 +2000,9 @@ async function startRecording(){
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
-      // iOS camera: 500ms timeslice (no timeslice → empty GOP → no data; 33ms → 0-byte chunks)
+      // iOS camera: 1000ms timeslice — generous interval, reliable on all iOS versions
       // Others: no timeslice → single reliable chunk on stop()
-      try{_isIOSCam?S.recorder.start(500):S.recorder.start();}
+      try{_isIOSCam?S.recorder.start(1000):S.recorder.start();}
       catch(e){console.warn('Recorder start:',e);}
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
@@ -2034,16 +2028,15 @@ function stopRecording(){
   const _fallbackChunks=S.recChunks;
   if(S.recorder){
     if(S.recorder.state==='recording'||S.recorder.state==='paused'){
-      // requestData() flushes buffered frames before stop — essential for no-timeslice mode
-      try{S.recorder.requestData();}catch(e){}
+      // No requestData() — timeslice mode delivers chunks automatically;
+      // no-timeslice mode: stop() alone triggers final ondataavailable before onstop.
+      // requestData() caused race condition on iOS (late ondataavailable after onstop).
       S.recorder.stop();
-      // Fallback: if onstop doesn't fire within 4s, call saveRecording directly
-      // Extended from 2.5s → 4s for no-timeslice recordings (larger single chunk)
       setTimeout(()=>{
         if(!_pendingSaveBlob&&_fallbackChunks&&_fallbackChunks.length>0){
           saveRecording(_fallbackChunks);
         } else if(!_pendingSaveBlob){
-          saveRecording([]); // show error button so user knows what happened
+          saveRecording([]); // show error button
         }
       },4000);
     }
@@ -2554,18 +2547,35 @@ async function restartCamera(){
   _camBusy=true;
   try{
     if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
-    const stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false});
+    // Multi-try: high quality → medium → basic (camera hardware may need a moment)
+    let stream=null;
+    const camTries=[
+      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false},
+      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1280},height:{ideal:720}},audio:false},
+      {video:{facingMode:S.facingMode},audio:false},
+      {video:true,audio:false}
+    ];
+    for(const c of camTries){
+      try{stream=await navigator.mediaDevices.getUserMedia(c);break;}
+      catch(e){console.warn('restartCamera attempt:',e.message);}
+    }
+    if(!stream){
+      // All attempts failed — auto-retry after 2s (camera may be temporarily busy)
+      setTimeout(()=>{if(!S.live&&!S.caps)restartCamera();},2000);
+      return;
+    }
     S.stream=stream;vid.srcObject=stream;
     vid.load();
-    await waitForVideo(3000);
+    try{await waitForVideo(3000);}catch(e){}
     try{await vid.play();}catch(e){console.warn('vid.play:',e);}
-    // 카메라 모드 transform 재적용
     vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
     cvs.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
-    setAppHeight(); // 레이아웃 70% 복원
+    setAppHeight();
     resizeCam();
-  }catch(e){console.error('Camera restart failed:',e);}
+  }catch(e){
+    console.error('Camera restart failed:',e);
+    setTimeout(()=>{if(!S.live&&!S.caps)restartCamera();},2000);
+  }
   finally{_camBusy=false;}
 }
 

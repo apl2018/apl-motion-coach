@@ -2049,9 +2049,119 @@ function stopRecording(){
     if(_recAudioCtx){_recAudioCtx.close().catch(()=>{});_recAudioCtx=null;_recAudioDest=null;}
   },3000);
 }
-function saveRecording(chunks){
+// ── fMP4 timestamp patcher ────────────────────────────────────────────────
+// iOS MediaRecorder writes wrong per-sample durations in trun boxes:
+//   sample[0].dur=23 (correct ~26fps), sample[1..N-1].dur=1 (WRONG 600fps),
+//   sample[N].dur=4,294,967,177 (WRONG 7,158,278s). Fixes all three + metadata.
+async function patchMP4Timestamps(blob){
+  try{
+    const ab=await blob.arrayBuffer();
+    const u8=new Uint8Array(ab);
+    const src=new DataView(ab);
+    const out=new Uint8Array(ab.slice(0));
+    const dst=new DataView(out.buffer);
+    const N=u8.length;
+    function u32(p){return src.getUint32(p);}
+    function setU32(p,v){dst.setUint32(p,v>>>0);}
+    function btype(p){return String.fromCharCode(u8[p+4],u8[p+5],u8[p+6],u8[p+7]);}
+    function boxes(s,e){
+      const r=[];let p=s;
+      while(p+8<=e){const sz=u32(p);const t=btype(p);if(sz<8||p+sz>e)break;r.push({pos:p,size:sz,type:t,dp:p+8});p+=sz;}
+      return r;
+    }
+    function find(s,e,t){return boxes(s,e).find(b=>b.type===t)||null;}
+    function findAll(s,e,t){return boxes(s,e).filter(b=>b.type===t);}
+    const moov=find(0,N,'moov');if(!moov)return blob;
+    const mvhd=find(moov.dp,moov.pos+moov.size,'mvhd');if(!mvhd)return blob;
+    const mvhdVer=u8[mvhd.dp];
+    // CORRECT box offsets: v0: timescale@dp+12,duration@dp+16  v1: ts@dp+20,dur@dp+24
+    const movieTS=u32(mvhd.dp+(mvhdVer===1?20:12));
+    const traks=findAll(moov.dp,moov.pos+moov.size,'trak');
+    const trackMeta={};
+    for(const trak of traks){
+      const tkhd=find(trak.dp,trak.pos+trak.size,'tkhd');if(!tkhd)continue;
+      const tv=u8[tkhd.dp];
+      const tid=u32(tkhd.dp+(tv===1?20:12)); // tkhd v0: track_ID@dp+12, v1: @dp+20
+      const mdia=find(trak.dp,trak.pos+trak.size,'mdia');if(!mdia)continue;
+      const mdhd=find(mdia.dp,mdia.pos+mdia.size,'mdhd');if(!mdhd)continue;
+      const mv=u8[mdhd.dp];
+      const ts=u32(mdhd.dp+(mv===1?20:12));
+      trackMeta[tid]={ts,tkhdDp:tkhd.dp,tkhdVer:tv,mdhdDp:mdhd.dp,mdhdVer:mv,totalDur:0};
+    }
+    let anyFixed=false;
+    const trackNext={};
+    for(const moof of findAll(0,N,'moof')){
+      for(const traf of findAll(moof.dp,moof.pos+moof.size,'traf')){
+        const tfhd=find(traf.dp,traf.pos+traf.size,'tfhd');if(!tfhd)continue;
+        const tid=u32(tfhd.dp+4);
+        const meta=trackMeta[tid];if(!meta)continue;
+        const ts=meta.ts;
+        if(!(tid in trackNext))trackNext[tid]=0;
+        const tfhdFlags=u32(tfhd.dp)&0xFFFFFF;
+        let defDur=0,toff=tfhd.dp+8;
+        if(tfhdFlags&0x01)toff+=8; if(tfhdFlags&0x02)toff+=4;
+        if(tfhdFlags&0x08){defDur=u32(toff);toff+=4;}
+        if(tfhdFlags&0x10)toff+=4; if(tfhdFlags&0x20)toff+=4;
+        const minDur=Math.max(1,Math.floor(ts/200)); // faster than 200fps = wrong
+        const maxDur=ts*5;                            // longer than 5s = wrong
+        const fixDur=defDur||Math.round(ts/30);
+        const tfdt=find(traf.dp,traf.pos+traf.size,'tfdt');
+        if(tfdt){
+          const tv2=u8[tfdt.dp];
+          let orig=tv2===1?(u32(tfdt.dp+4)*4294967296+u32(tfdt.dp+8)):u32(tfdt.dp+4);
+          const expected=trackNext[tid];
+          if(Math.abs(orig-expected)>ts*5){
+            if(tv2===1){dst.setUint32(tfdt.dp+4,Math.floor(expected/4294967296));dst.setUint32(tfdt.dp+8,expected>>>0);}
+            else dst.setUint32(tfdt.dp+4,expected>>>0);
+            anyFixed=true;
+          }
+        }
+        let fragDur=0;
+        for(const trun of findAll(traf.dp,traf.pos+traf.size,'trun')){
+          const tf=u32(trun.dp)&0xFFFFFF;const sc=u32(trun.dp+4);
+          let to=trun.dp+8;
+          if(tf&0x001)to+=4; if(tf&0x004)to+=4;
+          const hasDur=!!(tf&0x100),hasSz=!!(tf&0x200),hasFlg=!!(tf&0x400),hasCTO=!!(tf&0x800);
+          for(let i=0;i<sc;i++){
+            if(hasDur){
+              const dur=u32(to);
+              if(dur<minDur||dur>maxDur){dst.setUint32(to,fixDur>>>0);fragDur+=fixDur;anyFixed=true;}
+              else fragDur+=dur;
+              to+=4;
+            }else fragDur+=defDur;
+            if(hasSz)to+=4; if(hasFlg)to+=4; if(hasCTO)to+=4;
+          }
+        }
+        trackNext[tid]=(trackNext[tid]||0)+fragDur;
+        meta.totalDur+=fragDur;
+      }
+    }
+    if(!anyFixed)return blob;
+    let maxMovieDur=0;
+    for(const m of Object.values(trackMeta)){
+      if(m.ts&&m.totalDur){const d=Math.round(m.totalDur*movieTS/m.ts);if(d>maxMovieDur)maxMovieDur=d;}
+    }
+    // Fix mvhd: v0 duration@dp+16, v1 @dp+24(hi)+28(lo)
+    if(mvhdVer===1){setU32(mvhd.dp+24,0);setU32(mvhd.dp+28,maxMovieDur);}
+    else setU32(mvhd.dp+16,maxMovieDur);
+    for(const m of Object.values(trackMeta)){
+      if(!m.totalDur)continue;
+      const trkMov=Math.round(m.totalDur*movieTS/m.ts);
+      // tkhd: v0 duration@dp+20, v1 @dp+28+32
+      if(m.tkhdVer===1){setU32(m.tkhdDp+28,0);setU32(m.tkhdDp+32,trkMov);}
+      else setU32(m.tkhdDp+20,trkMov);
+      // mdhd: v0 duration@dp+16, v1 @dp+24+28
+      if(m.mdhdVer===1){setU32(m.mdhdDp+24,0);setU32(m.mdhdDp+28,m.totalDur);}
+      else setU32(m.mdhdDp+16,m.totalDur>>>0);
+    }
+    const s=Object.entries(trackMeta).map(([id,m])=>m.ts?`t${id}:${(m.totalDur/m.ts).toFixed(2)}s`:'?').join(' ');
+    console.log(`[patchMP4] ${s}`);
+    return new Blob([out],{type:blob.type});
+  }catch(e){console.warn('[patchMP4]',e);return blob;}
+}
+
+async function saveRecording(chunks){
   if(!chunks||!chunks.length){
-    // Chunks empty: codec/stream issue on this device. Show error instead of silent failure.
     const _sb=$('btn-sum-save');
     if(_sb&&_sb.style.display==='none'){
       _sb.style.display='block';
@@ -2065,13 +2175,14 @@ function saveRecording(chunks){
   const isMP4=recMime.includes('mp4');
   const ext=isMP4?'mp4':'webm';
   const saveMime=isMP4?'video/mp4':'video/webm';
-  const blob=new Blob(chunks,{type:saveMime});
+  const rawBlob=new Blob(chunks,{type:saveMime});
+  // iOS: fix fMP4 timestamps (wrong trun durations → 100x speed)
+  const _isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const blob=_isIOS?await patchMP4Timestamps(rawBlob):rawBlob;
   const now=new Date();
   const stamp=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
   const exName=S.ex.name;
   const fname=`APL_${exName}_${stamp}.${ext}`;
-  const file=new File([blob],fname,{type:saveMime,lastModified:Date.now()});
-  // Store blob for user-gesture share (navigator.share requires user gesture on iOS)
   _pendingSaveBlob=blob;_pendingSaveName=fname;
   const _saveBtn=$('btn-sum-save');
   if(_saveBtn){_saveBtn.style.display='block';_saveBtn.textContent='📥 영상 저장';}

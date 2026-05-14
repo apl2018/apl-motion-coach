@@ -233,6 +233,25 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
   padding:4px;line-height:1;opacity:.8}
 #btn-data-open:active{opacity:.5}
 /* IMAGE NAME MODAL */
+#rename-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);
+  display:none;align-items:flex-end;justify-content:center;z-index:620}
+#rename-modal.on{display:flex}
+#rename-box{background:var(--card);border-radius:18px 18px 0 0;
+  width:100%;max-width:480px;padding:20px 20px 32px;box-sizing:border-box}
+#rename-title{font-size:15px;font-weight:700;color:var(--txt);margin-bottom:6px}
+#rename-hint{font-size:12px;color:var(--txt2);margin-bottom:14px}
+#rename-input{width:100%;padding:12px 14px;border-radius:10px;box-sizing:border-box;
+  border:2px solid var(--border);background:var(--bg);color:var(--txt);
+  font-size:16px;outline:none;transition:border-color .2s;margin-bottom:12px}
+#rename-input:focus{border-color:var(--red)}
+#rename-btns{display:flex;gap:10px}
+#rename-cancel{flex:1;padding:12px;border-radius:10px;
+  border:1px solid var(--border);background:transparent;
+  color:var(--txt2);font-size:14px;cursor:pointer}
+#rename-confirm{flex:2;padding:12px;border-radius:10px;
+  border:none;background:var(--red);color:#fff;
+  font-size:14px;font-weight:700;cursor:pointer}
+#rename-confirm:active,#rename-cancel:active{opacity:.8}
 #img-name-modal{position:fixed;inset:0;background:rgba(0,0,0,.75);
   display:none;align-items:flex-end;justify-content:center;z-index:600;
   padding-bottom:env(safe-area-inset-bottom)}
@@ -601,6 +620,19 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 </div><!-- #app -->
 <input type="file" id="ref-file-input" accept="video/*,image/*,.aplref" style="display:none">
 <input type="file" id="ana-file-input" accept="video/*" style="display:none">
+
+<!-- Exercise Rename Modal -->
+<div id="rename-modal">
+  <div id="rename-box">
+    <div id="rename-title">✏️ 운동 이름 변경</div>
+    <div id="rename-hint">2초 길게 누른 운동의 이름을 변경합니다</div>
+    <input id="rename-input" type="text" maxlength="20" placeholder="운동 이름" autocomplete="off" spellcheck="false">
+    <div id="rename-btns">
+      <button id="rename-cancel">취소</button>
+      <button id="rename-confirm">✓ 저장</button>
+    </div>
+  </div>
+</div>
 
 <!-- Image Name Modal -->
 <div id="img-name-modal">
@@ -2384,6 +2416,28 @@ function updateRefUI(){
   if(!$('btn-ref-start').classList.contains('recording'))
     $('btn-ref-start').textContent=r?L.btn_ref_start_redo:L.btn_ref_start;
 }
+let _renameTarget=null; // exercise object being renamed
+function openRenameModal(ex){
+  _renameTarget=ex;
+  const inp=$('rename-input');
+  inp.value=ex.name;
+  $('rename-modal').classList.add('on');
+  setTimeout(()=>{inp.focus();inp.select();},120);
+}
+function closeRenameModal(){
+  $('rename-modal').classList.remove('on');
+  _renameTarget=null;
+}
+function confirmRename(){
+  if(!_renameTarget) return;
+  const v=$('rename-input').value.trim();
+  if(!v) return;
+  _renameTarget.name=v;
+  try{localStorage.setItem('apl_exname_'+_renameTarget.id,v);}catch(e){}
+  closeRenameModal();
+  buildExChips();
+  updateRefUI();
+}
 function buildExChips(){
   const row=$('ex-row');row.innerHTML='';
   for(const ex of EXERCISES){
@@ -2391,14 +2445,27 @@ function buildExChips(){
     c.className='exc'+(ex.id===S.ex.id?' on':'');
     c.dataset.id=ex.id;c.textContent=ex.name;
     if(S.refs[ex.id]){const d=document.createElement('div');d.className='sdot';c.appendChild(d);}
+    // Short press: select exercise
     c.addEventListener('click',()=>{
       if(S.live||S.caps) return;
       S.ex=ex;
-      // Do NOT set S.dir=ex.cam — all exercises default cam:'left' which would
-      // override the user's explicitly chosen direction (front/back/left/right)
-      document.querySelectorAll('.dirbtn').forEach(b=>b.classList.toggle('on',b.dataset.d===ex.cam));
       buildExChips();updateRefUI();
     });
+    // Long press (2 s): rename exercise
+    let _lpTimer=null;
+    const _lpStart=()=>{
+      _lpTimer=setTimeout(()=>{
+        _lpTimer=null;
+        openRenameModal(ex);
+      },2000);
+    };
+    const _lpCancel=()=>{clearTimeout(_lpTimer);_lpTimer=null;};
+    c.addEventListener('touchstart',_lpStart,{passive:true});
+    c.addEventListener('touchend',_lpCancel);
+    c.addEventListener('touchmove',_lpCancel);
+    c.addEventListener('mousedown',_lpStart);
+    c.addEventListener('mouseup',_lpCancel);
+    c.addEventListener('mouseleave',_lpCancel);
     row.appendChild(c);
   }
 }
@@ -2820,6 +2887,8 @@ let _hasExitedZone=false;  // true once user has left zone; required before re-e
 async function init(){
   setAppHeight(); // viewport 높이 즉시 보정
   for(const ex of EXERCISES){
+    // Load custom exercise name (long-press rename)
+    try{const n=localStorage.getItem('apl_exname_'+ex.id);if(n)ex.name=n;}catch(e){}
     try{
       const raw=localStorage.getItem('apl_ref_'+ex.id);
       if(raw){const d=JSON.parse(raw);S.refs[ex.id]=d.angles;}
@@ -2838,6 +2907,10 @@ async function init(){
       b.classList.add('on');S.dir=b.dataset.d;
     });
   });
+  $('rename-cancel').addEventListener('click',closeRenameModal);
+  $('rename-confirm').addEventListener('click',confirmRename);
+  $('rename-input').addEventListener('keydown',e=>{if(e.key==='Enter')confirmRename();if(e.key==='Escape')closeRenameModal();});
+  $('rename-modal').addEventListener('click',e=>{if(e.target===$('rename-modal'))closeRenameModal();});
   $('btn-ref-start').addEventListener('click',startRefRecording);
   $('btn-ref-file').addEventListener('click',openRefFileUpload);
   $('ref-file-input').addEventListener('change',onRefFileSelected);

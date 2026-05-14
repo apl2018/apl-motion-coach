@@ -2136,7 +2136,9 @@ async function patchMP4Timestamps(blob){
         if(tfhdFlags&0x10)toff+=4; if(tfhdFlags&0x20)toff+=4;
         const minDur=Math.max(1,Math.floor(ts/200)); // faster than 200fps = wrong
         const maxDur=ts*5;                            // longer than 5s = wrong
-        const fixDur=defDur||Math.round(ts/30);
+        // defDur 유효성 검사: 8~120fps 범위 내에서만 사용 (예: 327 ticks = 275fps → 무효)
+        const _minDurOk=Math.round(ts/120), _maxDurOk=Math.round(ts/8);
+        const fixDur=(defDur>=_minDurOk&&defDur<=_maxDurOk)?defDur:Math.round(ts/30);
         const tfdt=find(traf.dp,traf.pos+traf.size,'tfdt');
         if(tfdt){
           const tv2=u8[tfdt.dp];

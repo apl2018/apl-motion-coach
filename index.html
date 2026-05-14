@@ -2000,9 +2000,10 @@ async function startRecording(){
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
-      // iOS camera: 1000ms timeslice — generous interval, reliable on all iOS versions
-      // Others: no timeslice → single reliable chunk on stop()
-      try{_isIOSCam?S.recorder.start(1000):S.recorder.start();}
+      // NO timeslice for all platforms — single complete video file on stop().
+      // Timeslice recording produces absolute-timestamp chunks that concatenate into a Blob
+      // with wrong duration (1,988+ hours). start() delivers one properly-formed video file.
+      try{S.recorder.start();}
       catch(e){console.warn('Recorder start:',e);}
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
@@ -3122,8 +3123,11 @@ async function init(){
       if(document.visibilityState==='visible'){
         setAppHeight();
         if(_srcMode==='camera'&&!S.live&&!S.caps){
-          // 앱 복귀 시 항상 카메라 재시작 → 초기화면과 동일한 카메라 상태
-          setTimeout(restartCamera,500);
+          // First attempt at 800ms; second at 2s in case iOS camera hardware is slow to wake
+          setTimeout(restartCamera,800);
+          setTimeout(()=>{
+            if(!S.live&&!S.caps&&(vid.paused||vid.readyState<2))restartCamera();
+          },2000);
         } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },300);
       }
     });

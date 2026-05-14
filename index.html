@@ -477,7 +477,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
       <div class="ai" id="ai-knee"><div class="aidot"></div><span class="ailbl">무릎</span><span class="aival">--°</span></div>
       <div class="ai" id="ai-hip"><div class="aidot"></div><span class="ailbl">고관절</span><span class="aival">--°</span></div>
       <div class="ai" id="ai-trunk"><div class="aidot"></div><span class="ailbl">몸통</span><span class="aival">--°</span></div>
-      <div class="ai" id="ai-spine"><div class="aidot"></div><span class="ailbl">척추</span><span class="aival">--°</span></div>
+      <div class="ai" id="ai-spine"><div class="aidot"></div><span class="ailbl">경추</span><span class="aival">--°</span></div>
       <div class="ai" id="ai-shoulder"><div class="aidot"></div><span class="ailbl">어깨</span><span class="aival">--°</span></div>
       <div class="ai" id="ai-elbow"><div class="aidot"></div><span class="ailbl">팔꿈치</span><span class="aival">--°</span></div>
     </div>
@@ -571,7 +571,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         <label class="jsel active" id="jsel-knee"><input type="checkbox" checked><div class="jdot"></div>무릎</label>
         <label class="jsel active" id="jsel-hip"><input type="checkbox" checked><div class="jdot"></div>고관절</label>
         <label class="jsel active" id="jsel-trunk"><input type="checkbox" checked><div class="jdot"></div>몸통</label>
-        <label class="jsel active" id="jsel-spine"><input type="checkbox" checked><div class="jdot"></div>척추</label>
+        <label class="jsel active" id="jsel-spine"><input type="checkbox" checked><div class="jdot"></div>경추</label>
         <label class="jsel active" id="jsel-shoulder"><input type="checkbox" checked><div class="jdot"></div>어깨</label>
         <label class="jsel active" id="jsel-elbow"><input type="checkbox" checked><div class="jdot"></div>팔꿈치</label>
       </div>
@@ -708,7 +708,7 @@ ko:{flag:'🇰🇷',label:'KO',voice_lang:'ko-KR',
   sum_exercise:'운동 종목',sum_reps:'수행 횟수',sum_time:'총 운동 시간',
   sum_accuracy:'분석 정확도',sum_excellent:'우수',sum_good_rating:'보통',sum_poor:'개선 필요',
   sum_coaching:'주요 코칭 내용',sum_reps_unit:'회',
-  joint_knee:'무릎',joint_hip:'고관절',joint_trunk:'몸통',joint_spine:'척추',joint_shoulder:'어깨',joint_elbow:'팔꿈치',
+  joint_knee:'무릎',joint_hip:'고관절',joint_trunk:'몸통',joint_spine:'경추',joint_shoulder:'어깨',joint_elbow:'팔꿈치',
   voice_start:' 분석을 시작합니다.',voice_stop:'분석이 종료되었습니다. 수고하셨습니다.',
   voice_ref_saved:'기준 자세가 저장되었습니다.',
   voice_ref_fail:'자세 인식에 실패했습니다. 다시 시도해 주세요.',
@@ -1137,7 +1137,7 @@ function updateAnglesBar(cmp,rawAngles){
 }
 function doFeedback(cmp,inZone){
   const now=Date.now(),ov=overall(cmp),PR=TX[CL].PRAISE,FBL=TX[CL].FB;
-  if(!inZone) return;
+  // inZone is NOT a gate — feedback fires on time interval regardless of pose state
   if(now-S.startTime<_START_DELAY) return;  // startup delay
   if(S.speak) return;
   if(ov==='good'){
@@ -1796,7 +1796,7 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
   // ── Angle panel on right side of recording (mirrors on-screen #abar) ──────
   {
     const KEYS=['knee','hip','trunk','spine','shoulder','elbow'];
-    const LBLS=['무릎','고관절','몸통','척추','어깨','팔꿈치'];
+    const LBLS=['무릎','고관절','몸통','경추','어깨','팔꿈치'];
     const s=compH/960; // scale factor: design base = 960px height
     const pw=Math.round(52*s),ih=Math.round(50*s),gap=Math.round(3*s),pad=Math.round(6*s);
     const totalH=KEYS.length*(ih+gap)-gap+pad*2;
@@ -2773,31 +2773,45 @@ async function _forceCameraRestart(){
   if(_srcMode!=='camera'||_camBusy||S.caps) return;
   _camBusy=true;
   const wasLive=S.live;
-  // Pause rAF loop during restart to avoid detection errors on null srcObject
+  // Stop rAF during restart
   if(S.raf){cancelAnimationFrame(S.raf);S.raf=null;}
-  try{
-    // iOS critical: acquire NEW stream BEFORE stopping old one.
-    // Stopping first releases hardware; iOS then delivers black frames on next getUserMedia.
-    const newStream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},
-      audio:false});
-    // Stop old tracks after acquiring new stream
-    if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
-    S.stream=newStream;
-    // iOS: null srcObject first then reassign forces full hardware rebind
-    vid.srcObject=null;
-    await new Promise(r=>setTimeout(r,80));
-    vid.srcObject=newStream;
-    vid.load(); // matches switchCamera — forces iOS hardware rebind
-    await waitForVideo(3000);
-    await vid.play().catch(()=>{});
-    vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
-    cvs.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
-    resizeCam();
-    // Always restart loop when live (regardless of S.raf state since we cancelled above)
+
+  // ── Mirror switchCamera pattern exactly (same facingMode, different order) ──
+  // Get new stream FIRST (iOS: stop-first → camera hardware releases → black frames)
+  let newStream=null;
+  const tries=[
+    {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false},
+    {video:{facingMode:{ideal:S.facingMode},width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}},audio:false},
+    {video:{facingMode:S.facingMode},audio:false},
+    {video:true,audio:false},
+  ];
+  for(const c of tries){
+    try{newStream=await navigator.mediaDevices.getUserMedia(c);break;}
+    catch(e){console.warn('CamRestart attempt:',e.message);}
+  }
+
+  if(!newStream){
+    // All attempts failed — let health-check retry after 3s
+    _camBusy=false;
     if(wasLive){S.raf=requestAnimationFrame(loop);}
-  }catch(e){console.error('Force camera restart failed:',e);}
-  finally{_camBusy=false;}
+    return;
+  }
+
+  // Stop old tracks AFTER getting new stream
+  if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
+  S.stream=newStream;
+
+  // Apply new stream — exact same sequence as switchCamera (no null step)
+  vid.srcObject=newStream;
+  vid.load(); // forces iOS hardware rebind — this is what makes switchCamera work
+  try{await waitForVideo(3000);}catch(e){console.warn('waitForVideo timeout');}
+  await vid.play().catch(()=>{});
+
+  vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
+  cvs.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
+  resizeCam();
+  if(wasLive){S.raf=requestAnimationFrame(loop);}
+  _camBusy=false;
 }
 
 // Zone-entry feedback globals

@@ -147,14 +147,16 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
   display:none;align-items:center;justify-content:center}
 #succ.on{display:flex}
 #succ span{font-size:80px;color:#fff}
-#abar{position:absolute;bottom:0;left:0;right:0;
-  background:rgba(8,8,18,.88);display:none;flex-wrap:wrap;gap:5px;padding:7px 10px}
+#abar{position:absolute;top:50%;right:0;transform:translateY(-50%);
+  background:rgba(8,8,18,.82);display:none;flex-direction:column;
+  gap:3px;padding:6px 5px;border-radius:10px 0 0 10px;
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
 #abar.on{display:flex}
-.ai{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.05);
-  border-radius:8px;padding:4px 8px;flex:1;min-width:76px}
-.aidot{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:#2196F3}
-.ailbl{font-size:10px;color:var(--txt2)}
-.aival{font-size:13px;font-weight:700;margin-left:auto;color:#fff}
+.ai{display:flex;flex-direction:column;align-items:center;gap:1px;
+  background:rgba(255,255,255,.05);border-radius:6px;padding:5px 6px;width:44px}
+.aidot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:#2196F3}
+.ailbl{font-size:8px;color:var(--txt2);text-align:center;line-height:1.1}
+.aival{font-size:12px;font-weight:700;color:#fff;line-height:1.2}
 #rec-dot{display:none;position:absolute;top:12px;right:12px;
   width:10px;height:10px;border-radius:50%;background:#F44336;
   box-shadow:0 0 8px rgba(244,67,54,.8);animation:recblink 1s ease-in-out infinite}
@@ -1132,26 +1134,22 @@ function updateAnglesBar(cmp,rawAngles){
 function doFeedback(cmp,inZone){
   const now=Date.now(),ov=overall(cmp),PR=TX[CL].PRAISE,FBL=TX[CL].FB;
   if(!inZone) return;
-  // Praise on zone entry after 400ms, once per entry
+  if(now-S.startTime<_START_DELAY) return;  // startup delay
+  if(S.speak) return;
   if(ov==='good'){
     S.goodN++;
-    if(S.goodN>=8&&_zoneEntryAt>0&&!_zoneEntryFbGiven&&now-_zoneEntryAt>400&&now-S.lastPr>8000&&!S.speak){
+    if(S.goodN>=8&&now-S.lastPr>9000){
       speak(PR[Math.floor(Math.random()*PR.length)]);
-      S.lastPr=now;S.goodN=0;_zoneEntryFbGiven=true;
+      S.lastPr=now;S.goodN=0;
     }
     return;
   }
   S.goodN=0;
-  // Corrective: once per zone entry, 400ms stabilisation, min 3s gap
-  if(_zoneEntryAt===0) return;     // zone never properly entered; wait for real entry
-  if(_zoneEntryFbGiven) return;
-  if(now-_zoneEntryAt<400) return;
-  if(now-S.lastFB<_MIN_FB_GAP) return;
-  if(S.speak) return;
+  if(now-S.lastFB<_FB_INTERVAL) return;
   const fb=primaryFB(cmp);if(!fb) return;
   const msgs=FBL[fb.key];if(!msgs) return;
   const msg=msgs[fb.st]||msgs.warn;
-  speak(msg);S.lastFB=now;_zoneEntryFbGiven=true;
+  speak(msg);S.lastFB=now;
   S.fbLog[msg]=(S.fbLog[msg]||0)+1;
 }
 // ── DETECTION LOOP ───────────────────────────────────────────────────────────
@@ -1206,40 +1204,22 @@ async function _runDetection(){
         chip.className=ov;
         chip.textContent=ov==='good'?L.chip_good:ov==='warn'?L.chip_warn:L.chip_crit;
       }else{chip.className='';}
-      // ── FEEDBACK ZONE LOGIC ───────────────────────────────────────────────────
-      // Frontal mode: zone = position close to reference (no 'crit' deviations)
-      // Lateral mode: zone = angle-based isPoseInZone result
-      let feedInZone;
-      if(isFrontal()&&_lastPosCmp&&_posRef[S.ex.id]){
-        feedInZone=['hipShift','pelvicTilt','lKneeOff','rKneeOff'].every(
-          k=>!_lastPosCmp[k]||_lastPosCmp[k].dev==null||_lastPosCmp[k].st!=='crit');
-      } else {
-        feedInZone=inZone;
-      }
-      // Mark that user has been out of zone (required before entry triggers feedback)
-      if(!feedInZone) _hasExitedZone=true;
-      // Zone entry: only count if user was previously outside the zone
-      if(feedInZone&&!_feedZone&&_hasExitedZone){
-        _zoneEntryAt=Date.now();_zoneEntryFbGiven=false;
-      }
-      _feedZone=feedInZone;
-      S.inZone=inZone; // UI zone badge stays angle-based
+      S.inZone=inZone;
 
       if(isFrontal()&&_lastPosCmp){
+        // Frontal: time-based corrective feedback (no zone requirement)
         const now2=Date.now();
-        if(feedInZone&&_zoneEntryAt>0&&!_zoneEntryFbGiven&&now2-_zoneEntryAt>400&&now2-S.lastFB>_MIN_FB_GAP&&!S.speak){
-          const fb=posFeedbackStr(_lastPosCmp);
-          if(fb){
-            speak(fb);S.lastFB=now2;_zoneEntryFbGiven=true;
-            S.fbLog[fb]=(S.fbLog[fb]||0)+1;
-          } else {
-            // position matches reference — praise
+        if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak){
+          if(!posAllGood(_lastPosCmp)){
+            const fb=posFeedbackStr(_lastPosCmp);
+            if(fb){speak(fb);S.lastFB=now2;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
+          } else if(now2-S.lastPr>9000){
             const PR=TX[CL].PRAISE;
             speak(PR[Math.floor(Math.random()*PR.length)]);
-            S.lastFB=now2;_zoneEntryFbGiven=true;
+            S.lastPr=now2;
           }
         }
-      } else if(cmp) doFeedback(cmp,feedInZone);
+      } else if(cmp) doFeedback(cmp,inZone);
     }
   }catch(e){console.warn(e);}
   _detPending=false;
@@ -1606,6 +1586,10 @@ function closeFramePicker(){
   if(_fpBlobURL){URL.revokeObjectURL(_fpBlobURL);_fpBlobURL=null;}
   _fpPoses=null;_refChunks=[];
   $('fp-cvs').getContext('2d').clearRect(0,0,$('fp-cvs').width,$('fp-cvs').height);
+  // Restart camera after frame picker closes (screen can go black during ref capture)
+  if(_srcMode==='camera'){
+    setTimeout(()=>{ _forceCameraRestart(); },300);
+  }
 }
 
 // ── OSCILLATION-BASED REP COUNTER ─────────────────────────────────────────────
@@ -1796,6 +1780,45 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=4;ctx2.strokeText(t,p.x+12,p.y-8);
       ctx2.fillStyle=col;ctx2.fillText(t,p.x+12,p.y-8);
     }
+  }
+  // ── Angle panel on right side of recording (mirrors on-screen #abar) ──────
+  {
+    const KEYS=['knee','hip','trunk','spine','shoulder','elbow'];
+    const LBLS=['무릎','고관절','몸통','척추','어깨','팔꿈치'];
+    const s=compH/960; // scale factor: design base = 960px height
+    const pw=Math.round(52*s),ih=Math.round(50*s),gap=Math.round(3*s),pad=Math.round(6*s);
+    const totalH=KEYS.length*(ih+gap)-gap+pad*2;
+    const px=compW-pw, py=Math.round((compH-totalH)/2);
+    ctx2.save();
+    ctx2.textAlign='center';
+    // Panel background
+    ctx2.fillStyle='rgba(8,8,18,.86)';
+    ctx2.fillRect(px,py,pw,totalH);
+    for(let n=0;n<KEYS.length;n++){
+      const k=KEYS[n];
+      // Use cmp angles; fall back to raw angles when no reference pose set
+      const c=cmp?cmp[k]:(typeof _lastAngles!=='undefined'&&_lastAngles&&_lastAngles[k]!=null?{cur:_lastAngles[k],st:'unk'}:null);
+      const iy=py+pad+n*(ih+gap);
+      const cx2=px+pw/2;
+      // Item background
+      ctx2.fillStyle='rgba(255,255,255,.05)';
+      ctx2.fillRect(px+2,iy,pw-4,ih);
+      // Status dot
+      const dr=Math.max(3,Math.round(3.5*s));
+      ctx2.beginPath();ctx2.arc(cx2,iy+dr+Math.round(2*s),dr,0,Math.PI*2);
+      ctx2.fillStyle=(c&&c.cur!=null)?(ST_COL[c.st]||'#2196F3'):'#444';
+      ctx2.fill();
+      // Joint label (e.g. 무릎)
+      ctx2.font=`${Math.max(9,Math.round(8*s))}px sans-serif`;
+      ctx2.fillStyle='rgba(200,200,200,.9)';
+      ctx2.textBaseline='middle';
+      ctx2.fillText(LBLS[n],cx2,iy+Math.round(ih*.48));
+      // Angle value (e.g. 142°)
+      ctx2.font=`bold ${Math.max(11,Math.round(12*s))}px sans-serif`;
+      ctx2.fillStyle=(c&&c.cur!=null)?(ST_COL[c.st]||'#fff'):'#888';
+      ctx2.fillText((c&&c.cur!=null)?c.cur+'°':'--°',cx2,iy+Math.round(ih*.8));
+    }
+    ctx2.restore();
   }
 }
 
@@ -2251,7 +2274,7 @@ async function startLive(){
     $('pos-bar').classList.remove('on');
     const tw=$('traj-wrap'); if(tw) tw.classList.remove('on');
   }
-  _zoneEntryAt=0;_zoneEntryFbGiven=false;_feedZone=false;_hasExitedZone=false;
+  // (zone-entry globals removed — using simple time-based feedback)
   $('rep-badge').classList.add('on');$('zone-badge').classList.add('on');
   if(!S.refs[S.ex.id])$('no-ref').classList.add('on');
   startRecording(); // audioStream already set, so skips getUserMedia inside

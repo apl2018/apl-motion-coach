@@ -223,6 +223,9 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #btn-ref-stop:active{opacity:.6}
 #btn-ref-file{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--txt2);font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
 #btn-ref-file:active{opacity:.6}
+#btn-gate{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--txt2);font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
+#btn-gate.set{border-color:rgba(255,165,0,.7);color:#FFA500}
+#btn-gate:active{opacity:.6}
 #src-row{display:flex;gap:8px;margin-top:4px}
 .srctgl{flex:1;padding:7px 4px;border-radius:10px;border:1px solid var(--border);color:var(--txt2);text-align:center;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s;user-select:none;-webkit-user-select:none}
 .srctgl.on{background:var(--red);color:#fff;border-color:transparent}
@@ -622,6 +625,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         <button id="btn-ref-start">● 기준 시작</button>
         <button id="btn-ref-stop">■ 기준 종료</button>
         <button id="btn-ref-file">📁 파일</button>
+        <button id="btn-gate" title="기준 자세에 진입하기 직전 자세(예: 백스윙 탑)를 저장하면, 그 방향으로 지나갈 때만 피드백합니다">⬟ 게이트</button>
       </div>
     </div>
     <div id="fb-txt"></div>
@@ -990,7 +994,16 @@ const S={
 };
 function freshStats(){
   return{zoneFrames:0,totalFrames:0,
-    joints:{knee:{g:0,w:0,c:0},hip:{g:0,w:0,c:0},trunk:{g:0,w:0,c:0},spine:{g:0,w:0,c:0},shoulder:{g:0,w:0,c:0},elbow:{g:0,w:0,c:0}}};
+    joints:{knee:{g:0,w:0,c:0},hip:{g:0,w:0,c:0},trunk:{g:0,w:0,c:0},spine:{g:0,w:0,c:0},shoulder:{g:0,w:0,c:0},elbow:{g:0,w:0,c:0}},
+    posMetrics:{
+      shoulderTilt:{g:0,w:0,c:0,sum:0,cnt:0},
+      hipTilt:      {g:0,w:0,c:0,sum:0,cnt:0},
+      trunkLean:    {g:0,w:0,c:0,sum:0,cnt:0},
+      hipShift:     {g:0,w:0,c:0,sum:0,cnt:0},
+      lKneeOff:     {g:0,w:0,c:0,sum:0,cnt:0},
+      rKneeOff:     {g:0,w:0,c:0,sum:0,cnt:0}
+    }
+  };
 }
 
 // ── DOM ──────────────────────────────────────────────────────────────────────
@@ -1271,6 +1284,19 @@ async function _runDetection(){
         const posRef=_posRef[S.ex.id]||null;
         _lastPosCmp=posRef?comparePos(pos,posRef):null;
         if(pos) pushPosHistory(pos);
+        // 정면/후면 자세 지표 통계 누적
+        if(pos&&S.stats){
+          const PM=S.stats.posMetrics;
+          const cmpP=_lastPosCmp;
+          for(const k of ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff']){
+            const v=pos[k];if(v==null) continue;
+            PM[k].sum+=v;PM[k].cnt++;
+            let st;
+            if(cmpP&&cmpP[k]&&cmpP[k].st!=='unk') st=cmpP[k].st;
+            else{const av=Math.abs(v),t=POS_THR[k];st=av<=t?'good':av<=t*1.8?'warn':'crit';}
+            if(st==='good')PM[k].g++;else if(st==='warn')PM[k].w++;else PM[k].c++;
+          }
+        }
       } else { _lastPos=null; _lastPosCmp=null; }
       const angles=extractAngles(kps);
       _lastAngles=angles;
@@ -1280,9 +1306,13 @@ async function _runDetection(){
       const ov=cmp?overall(cmp):'unk';
       const inZone=isPoseInZone(angles,ref);
       const L=TX[CL];
-      const zb=$('zone-badge');zb.classList.add('on');
-      if(inZone){zb.className='on in';zb.textContent=L.zone_in;}
-      else{zb.className='on out';zb.textContent=L.zone_out;}
+      const zb=$('zone-badge');
+      if(isFrontal()){zb.classList.remove('on');}
+      else{
+        zb.classList.add('on');
+        if(inZone){zb.className='on in';zb.textContent=L.zone_in;}
+        else{zb.className='on out';zb.textContent=L.zone_out;}
+      }
       if(ref) updateRepOsc(angles,ref);
       S.inZone=inZone;
       if(S.stats&&inZone&&cmp){
@@ -1324,7 +1354,28 @@ async function _runDetection(){
             }
           }
         }
-      } else if(cmp) doFeedback(cmp,inZone);
+      } else if(cmp){
+        const gRef=_gateEntryRef[S.ex.id];
+        if(gRef){
+          // 방향 게이트 모드: 진입 자세 통과 후 기준 구역 진입 시에만 피드백
+          const devToGate=getAvgDev(angles,gRef);
+          const now3=Date.now();
+          if(devToGate!=null&&devToGate<=_GATE_ENTRY_THR){
+            // 진입 자세 감지 → primed 상태 유지 및 타임스탬프 갱신
+            _gateState='primed';_gateLastPrimeT=now3;
+          }
+          if(_gateState==='primed'&&now3-_gateLastPrimeT<_GATE_PRIME_TIMEOUT){
+            if(inZone&&!_gateWasInZone){
+              // 기준 자세 구역 Rising-edge: 진입 방향으로 통과 감지 → 피드백 즉시 발화
+              _gateState='idle';S.lastFB=0;S.goodN=0;
+              doFeedback(cmp,true);
+            }
+          }
+          _gateWasInZone=inZone;
+        } else {
+          doFeedback(cmp,inZone);
+        }
+      }
     }
   }catch(e){console.warn(e);}
   _detPending=false;
@@ -1711,6 +1762,15 @@ const OSC_AMP_MIN=10; // min 10° excursion from ref needed to count a rep
 const OSC_COOL_MS=600;// min 600ms between reps (prevents double-count on noise)
 const OSC_MAX_DEV=80; // only count rep if closest approach ≤80° avg deviation
 
+// ── DIRECTION GATE ───────────────────────────────────────────────────────────
+// 방향 게이트: 진입 자세(예: 백스윙 탑)를 통과한 뒤 기준 자세에 진입할 때만 피드백
+let _gateEntryRef = {};     // {[exId]: angles} — 진입 자세 (운동별 저장)
+let _gateState = 'idle';    // 'idle' | 'primed' (진입 자세 통과 후 대기)
+let _gateLastPrimeT = 0;    // primed 상태가 마지막으로 갱신된 시각
+let _gateWasInZone = false; // 이전 프레임에서 기준 자세 구역 안에 있었는지
+const _GATE_ENTRY_THR = 40; // 진입 자세 인식 임계값 (평균 편차 °)
+const _GATE_PRIME_TIMEOUT = 8000; // 진입 자세 통과 후 피드백 대기 최대 시간 ms
+
 function getAvgDev(angles,ref){
   if(!ref) return null;
   let sum=0,cnt=0;
@@ -1891,7 +1951,7 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
     const ok2=p=>p&&p.score>=CONF;
     const lHip2=kps[11],rHip2=kps[12],lSh2=kps[5],rSh2=kps[6];
     const lKnee2=kps[13],rKnee2=kps[14],lAnk2=kps[15],rAnk2=kps[16];
-    const lw=Math.max(2.5,compH/300);
+    const lw=2.5; // 측면 분석과 동일한 선 두께 기준
     function posCol2(key,al){
       const st2=pcmp2&&pcmp2[key]?pcmp2[key].st:'unk';
       const base=ST_COL_POS[st2]||'#2196F3';
@@ -1900,37 +1960,36 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       return `rgba(${r},${g},${b},${al})`;
     }
     function _lbl2(x,y,t,col){
-      const fs=Math.max(14,Math.round(compH*0.018));
-      ctx2.font=`bold ${fs}px -apple-system,sans-serif`;
-      ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=Math.max(3,lw*2);
+      ctx2.font='bold 18px -apple-system,sans-serif'; // 측면 분석과 동일한 고정 크기
+      ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=3.5;
       ctx2.strokeText(t,x,y);ctx2.fillStyle=col;ctx2.fillText(t,x,y);
     }
     // 어깨 연결선
     if(ok2(lSh2)&&ok2(rSh2)){
       const pL=xy(lSh2),pR=xy(rSh2);
       ctx2.save();ctx2.beginPath();ctx2.moveTo(pL.x,pL.y);ctx2.lineTo(pR.x,pR.y);
-      ctx2.strokeStyle=posCol2('shoulderTilt',.8);ctx2.lineWidth=lw*1.5;ctx2.lineCap='round';ctx2.stroke();ctx2.restore();
+      ctx2.strokeStyle=posCol2('shoulderTilt',.8);ctx2.lineWidth=3.5;ctx2.lineCap='round';ctx2.stroke();ctx2.restore();
     }
     // 골반 연결선
     if(ok2(lHip2)&&ok2(rHip2)){
       const pL=xy(lHip2),pR=xy(rHip2);
       ctx2.save();ctx2.beginPath();ctx2.moveTo(pL.x,pL.y);ctx2.lineTo(pR.x,pR.y);
-      ctx2.strokeStyle=posCol2('hipTilt',.8);ctx2.lineWidth=lw*1.5;ctx2.lineCap='round';ctx2.stroke();ctx2.restore();
+      ctx2.strokeStyle=posCol2('hipTilt',.8);ctx2.lineWidth=3.5;ctx2.lineCap='round';ctx2.stroke();ctx2.restore();
     }
     // 몸통기울기 선 (어깨 중점 → 골반 중점)
     if(ok2(lSh2)&&ok2(rSh2)&&ok2(lHip2)&&ok2(rHip2)){
       const mSh=xy({x:(lSh2.x+rSh2.x)/2,y:(lSh2.y+rSh2.y)/2,score:1});
       const mHip=xy({x:(lHip2.x+rHip2.x)/2,y:(lHip2.y+rHip2.y)/2,score:1});
       const tc=posCol2('trunkLean',.9);
-      ctx2.save();ctx2.setLineDash([Math.round(compH*0.007),Math.round(compH*0.005)]);
+      ctx2.save();ctx2.setLineDash([7,5]);
       ctx2.beginPath();ctx2.moveTo(mSh.x,mSh.y);ctx2.lineTo(mHip.x,mHip.y);
-      ctx2.strokeStyle=tc;ctx2.lineWidth=lw*1.2;ctx2.stroke();ctx2.setLineDash([]);
+      ctx2.strokeStyle=tc;ctx2.lineWidth=2.5;ctx2.stroke();ctx2.setLineDash([]);
       const mid2={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
-      ctx2.beginPath();ctx2.arc(mid2.x,mid2.y,Math.max(4,lw*1.5),0,Math.PI*2);ctx2.fillStyle=tc;ctx2.fill();
+      ctx2.beginPath();ctx2.arc(mid2.x,mid2.y,5,0,Math.PI*2);ctx2.fillStyle=tc;ctx2.fill();
       if(pos.trunkLean!=null){
         const v2=pos.trunkLean,side2=v2>0?'우 ':'좌 ';
         ctx2.textAlign='left';
-        _lbl2(mid2.x+lw*4,mid2.y-lw*2,side2+Math.abs(v2)+'°',tc);
+        _lbl2(mid2.x+10,mid2.y-4,side2+Math.abs(v2)+'°',tc);
       }
       ctx2.restore();
     }
@@ -1938,12 +1997,12 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
     if(ok2(lHip2)&&ok2(rHip2)&&ok2(lAnk2)&&ok2(rAnk2)){
       const mh2=xy({x:(lHip2.x+rHip2.x)/2,y:(lHip2.y+rHip2.y)/2,score:1});
       const ma2=xy({x:(lAnk2.x+rAnk2.x)/2,y:(lAnk2.y+rAnk2.y)/2,score:1});
-      ctx2.save();ctx2.setLineDash([Math.round(compH*0.005),Math.round(compH*0.005)]);
+      ctx2.save();ctx2.setLineDash([5,5]);
       ctx2.beginPath();ctx2.moveTo(mh2.x,mh2.y);ctx2.lineTo(ma2.x,ma2.y);
-      ctx2.strokeStyle='rgba(33,150,243,.5)';ctx2.lineWidth=lw;ctx2.stroke();ctx2.setLineDash([]);
+      ctx2.strokeStyle='rgba(33,150,243,.5)';ctx2.lineWidth=2;ctx2.stroke();ctx2.setLineDash([]);
       if(pos.hipShift!=null){
         const hs=(pos.hipShift>0?'+':'')+pos.hipShift;
-        ctx2.textAlign='left';_lbl2(mh2.x+lw*4,mh2.y+lw*8,hs,posCol2('hipShift'));
+        ctx2.textAlign='left';_lbl2(mh2.x+10,mh2.y+20,hs,posCol2('hipShift'));
       }
       ctx2.restore();
     }
@@ -1958,29 +2017,29 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       if(dist<4) return;
       ctx2.save();ctx2.beginPath();ctx2.moveTo(expP.x,expP.y);ctx2.lineTo(kneeP.x,kneeP.y);
       ctx2.strokeStyle=dist>18?'rgba(244,67,54,.85)':'rgba(255,193,7,.85)';
-      ctx2.lineWidth=lw*1.2;ctx2.lineCap='round';ctx2.stroke();ctx2.restore();
+      ctx2.lineWidth=3;ctx2.lineCap='round';ctx2.stroke();ctx2.restore();
     }
     kneeLineComp(lHip2,lKnee2,lAnk2);
     kneeLineComp(rHip2,rKnee2,rAnk2);
-    // 관절 레이블 (정면 모드)
+    // 관절 레이블 (정면 모드) — 고정 오프셋
     ctx2.textAlign='left';
     if(ok2(lSh2)&&ok2(rSh2)&&pos.shoulderTilt!=null){
       const mSh=xy({x:(lSh2.x+rSh2.x)/2,y:(lSh2.y+rSh2.y)/2,score:1});
       const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓';
-      _lbl2(mSh.x-Math.round(compW*0.06),mSh.y-lw*4,side+Math.abs(v)+'°',posCol2('shoulderTilt'));
+      _lbl2(mSh.x-50,mSh.y-10,side+Math.abs(v)+'°',posCol2('shoulderTilt'));
     }
     if(ok2(lHip2)&&ok2(rHip2)&&pos.hipTilt!=null){
       const mHip=xy({x:(lHip2.x+rHip2.x)/2,y:(lHip2.y+rHip2.y)/2,score:1});
       const v=pos.hipTilt,side=v>0?'우↓':'좌↓';
-      _lbl2(mHip.x-Math.round(compW*0.06),mHip.y-lw*3,side+Math.abs(v)+'°',posCol2('hipTilt'));
+      _lbl2(mHip.x-50,mHip.y-8,side+Math.abs(v)+'°',posCol2('hipTilt'));
     }
     if(ok2(lKnee2)&&pos.lKneeOff!=null){
       const p=xy(lKnee2),v=pos.lKneeOff,t=(v>0?'+':'')+v;
-      _lbl2(p.x-Math.round(compW*0.08),p.y-lw*3,t,posCol2('lKneeOff'));
+      _lbl2(p.x-46,p.y-6,t,posCol2('lKneeOff'));
     }
     if(ok2(rKnee2)&&pos.rKneeOff!=null){
       const p=xy(rKnee2),v=pos.rKneeOff,t=(v>0?'+':'')+v;
-      _lbl2(p.x+lw*3,p.y-lw*3,t,posCol2('rKneeOff'));
+      _lbl2(p.x+8,p.y-6,t,posCol2('rKneeOff'));
     }
   }
   // Angle labels (측면 모드만)
@@ -2800,6 +2859,7 @@ async function startLive(){
   }
 
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
+  _gateState='idle';_gateLastPrimeT=0;_gateWasInZone=false;
   resetRepOsc();
   $('rep-num').textContent='0';
   S.live=true;S.lastFB=0;S.lastPr=0;S.goodN=0;S.speak=false;
@@ -2818,7 +2878,7 @@ async function startLive(){
     const tw=$('traj-wrap'); if(tw) tw.classList.remove('on');
   }
   // (zone-entry globals removed — using simple time-based feedback)
-  $('rep-badge').classList.add('on');$('zone-badge').classList.add('on');
+  $('rep-badge').classList.add('on');if(!isFrontal())$('zone-badge').classList.add('on');
   if(!S.refs[S.ex.id])$('no-ref').classList.add('on');
   startRecording(); // audioStream already set, so skips getUserMedia inside
   loop();
@@ -2861,47 +2921,98 @@ function showSummary(elapsed){
   const exName=S.ex.name;
   $('sum-title').textContent=exName+L.sum_title;
   $('sum-sub').textContent=CL==='ko'?`총 ${m}:${s}  ·  ${S.repCount}회 수행`:`${m}:${s}  ·  ${S.repCount} ${L.rep_lbl}`;
-  let totalG=0,totalAll=0;
-  const selKeys=['knee','hip','trunk','spine'].filter(k=>S.jointSel[k]);
-  for(const k of selKeys){
-    const j=st.joints[k];totalG+=j.g;totalAll+=j.g+j.w+j.c;
-  }
-  const pct=totalAll>0?Math.round(totalG/totalAll*100):0;
   const scoreEl=$('sum-score-num');
-  scoreEl.textContent=pct+'점';
-  scoreEl.className='sum-score-num '+(pct>=80?'good':pct>=50?'warn':'crit');
-  $('sum-score-lbl').innerHTML=L.sum_score_lbl+'<br><span style="font-size:11px">'+L.sum_zone_pre+st.zoneFrames+L.sum_zone_suf+'</span>';
-  $('sum-joints-lbl').textContent=L.sum_joints_title;
-  const jlbls={knee:L.joint_knee,hip:L.joint_hip,trunk:L.joint_trunk,spine:L.joint_spine,shoulder:L.joint_shoulder,elbow:L.joint_elbow};
   const bars=$('sum-bars');bars.innerHTML='';
-  for(const k of selKeys){
-    const j=st.joints[k],tot=j.g+j.w+j.c||1;
-    const gp=Math.round(j.g/tot*100),wp=Math.round(j.w/tot*100),cp=100-gp-wp;
-    const div=document.createElement('div');div.className='bar-row';
-    div.innerHTML=`<span class="bar-name">${jlbls[k]}</span><div class="bar-track"><div class="bar-g" style="width:${gp}%"></div><div class="bar-w" style="width:${wp}%"></div><div class="bar-c" style="width:${cp}%"></div></div><span class="bar-pct">${gp}점</span>`;
-    bars.appendChild(div);
-  }
   const info=$('sum-info');info.innerHTML='';
-  const qual=pct>=80?L.sum_excellent:pct>=50?L.sum_good_rating:L.sum_poor;
-  const rows=[[L.sum_exercise,exName],[L.sum_reps,S.repCount+L.sum_reps_unit],[L.sum_time,m+':'+s],[L.sum_accuracy,pct+'점  ('+qual+')']];
-  for(const[l,v]of rows){
-    const d=document.createElement('div');d.className='sum-row';
-    d.innerHTML=`<span class="sum-row-lbl">${l}</span><span class="sum-row-val">${v}</span>`;
-    info.appendChild(d);
-  }
   const fbEl=$('sum-feedback');
-  const fbEntries=Object.entries(S.fbLog).sort((a,b)=>b[1]-a[1]);
-  if(fbEntries.length){
-    fbEl.style.display='block';
-    const cntLbl=CL==='ko'?'회':'×';
-    const top=fbEntries.slice(0,3).map(([msg,cnt])=>`<strong>·</strong> ${msg} (${cnt}${cntLbl})`).join('<br>');
-    fbEl.innerHTML=`<strong>${L.sum_coaching}</strong><br>`+top;
-  }else{fbEl.style.display='none';}
+
+  if(isFrontal()){
+    // ── 정면/후면 결과: 자세 위치 지표 기반 ──────────────────────────────
+    const PM=st.posMetrics;
+    const posKeys=['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff'];
+    const posLbls={shoulderTilt:'어깨기울기',hipTilt:'골반기울기',trunkLean:'몸통기울기',hipShift:'골반위치',lKneeOff:'무릎 L',rKneeOff:'무릎 R'};
+    const posUnit={shoulderTilt:'°',hipTilt:'°',trunkLean:'°',hipShift:'%',lKneeOff:'%',rKneeOff:'%'};
+    // 점수: 전체 측정 프레임 중 good 비율
+    let totalG=0,totalAll=0;
+    for(const k of posKeys){const m=PM[k];totalG+=m.g;totalAll+=m.g+m.w+m.c;}
+    const pct=totalAll>0?Math.round(totalG/totalAll*100):0;
+    scoreEl.textContent=pct+'점';
+    scoreEl.className='sum-score-num '+(pct>=80?'good':pct>=50?'warn':'crit');
+    $('sum-score-lbl').innerHTML='자세 안정성<br><span style="font-size:11px">총 '+st.totalFrames+'프레임 분석</span>';
+    $('sum-joints-lbl').textContent='항목별 자세 분석';
+    for(const k of posKeys){
+      const pm=PM[k];if(pm.cnt===0) continue;
+      const tot=pm.g+pm.w+pm.c||1;
+      const gp=Math.round(pm.g/tot*100),wp=Math.round(pm.w/tot*100),cp=100-gp-wp;
+      const avg=Math.round(Math.abs(pm.sum/pm.cnt)*10)/10;
+      const div=document.createElement('div');div.className='bar-row';
+      div.innerHTML=`<span class="bar-name" style="width:58px;font-size:11px">${posLbls[k]}</span><div class="bar-track"><div class="bar-g" style="width:${gp}%"></div><div class="bar-w" style="width:${wp}%"></div><div class="bar-c" style="width:${cp}%"></div></div><span class="bar-pct" style="width:42px;font-size:10px">±${avg}${posUnit[k]}</span>`;
+      bars.appendChild(div);
+    }
+    const qual=pct>=80?'안정적':pct>=50?'보통':'교정 필요';
+    const rows=[['운동 종목',exName],['운동 시간',m+':'+s],['분석 점수',pct+'점  ('+qual+')']];
+    for(const[l,v]of rows){
+      const d=document.createElement('div');d.className='sum-row';
+      d.innerHTML=`<span class="sum-row-lbl">${l}</span><span class="sum-row-val">${v}</span>`;
+      info.appendChild(d);
+    }
+    // 주요 피드백 (가장 많이 발생한 순)
+    const fbEntries=Object.entries(S.fbLog).sort((a,b)=>b[1]-a[1]);
+    if(fbEntries.length){
+      fbEl.style.display='block';
+      const top=fbEntries.slice(0,3).map(([msg,cnt])=>`<strong>·</strong> ${msg} (${cnt}회)`).join('<br>');
+      fbEl.innerHTML=`<strong>주요 코칭 내용</strong><br>`+top;
+    }else{fbEl.style.display='none';}
+
+  } else {
+    // ── 측면 결과: 관절 각도 기반 (기존 로직) ────────────────────────────
+    let totalG=0,totalAll=0;
+    const selKeys=['knee','hip','trunk','spine'].filter(k=>S.jointSel[k]);
+    for(const k of selKeys){
+      const j=st.joints[k];totalG+=j.g;totalAll+=j.g+j.w+j.c;
+    }
+    const pct=totalAll>0?Math.round(totalG/totalAll*100):0;
+    scoreEl.textContent=pct+'점';
+    scoreEl.className='sum-score-num '+(pct>=80?'good':pct>=50?'warn':'crit');
+    $('sum-score-lbl').innerHTML=L.sum_score_lbl+'<br><span style="font-size:11px">'+L.sum_zone_pre+st.zoneFrames+L.sum_zone_suf+'</span>';
+    $('sum-joints-lbl').textContent=L.sum_joints_title;
+    const jlbls={knee:L.joint_knee,hip:L.joint_hip,trunk:L.joint_trunk,spine:L.joint_spine,shoulder:L.joint_shoulder,elbow:L.joint_elbow};
+    for(const k of selKeys){
+      const j=st.joints[k],tot=j.g+j.w+j.c||1;
+      const gp=Math.round(j.g/tot*100),wp=Math.round(j.w/tot*100),cp=100-gp-wp;
+      const div=document.createElement('div');div.className='bar-row';
+      div.innerHTML=`<span class="bar-name">${jlbls[k]}</span><div class="bar-track"><div class="bar-g" style="width:${gp}%"></div><div class="bar-w" style="width:${wp}%"></div><div class="bar-c" style="width:${cp}%"></div></div><span class="bar-pct">${gp}점</span>`;
+      bars.appendChild(div);
+    }
+    const qual=pct>=80?L.sum_excellent:pct>=50?L.sum_good_rating:L.sum_poor;
+    const rows=[[L.sum_exercise,exName],[L.sum_reps,S.repCount+L.sum_reps_unit],[L.sum_time,m+':'+s],[L.sum_accuracy,pct+'점  ('+qual+')']];
+    for(const[l,v]of rows){
+      const d=document.createElement('div');d.className='sum-row';
+      d.innerHTML=`<span class="sum-row-lbl">${l}</span><span class="sum-row-val">${v}</span>`;
+      info.appendChild(d);
+    }
+    const fbEntries=Object.entries(S.fbLog).sort((a,b)=>b[1]-a[1]);
+    if(fbEntries.length){
+      fbEl.style.display='block';
+      const cntLbl=CL==='ko'?'회':'×';
+      const top=fbEntries.slice(0,3).map(([msg,cnt])=>`<strong>·</strong> ${msg} (${cnt}${cntLbl})`).join('<br>');
+      fbEl.innerHTML=`<strong>${L.sum_coaching}</strong><br>`+top;
+    }else{fbEl.style.display='none';}
+  }
   $('btn-sum-close').textContent=L.sum_close;
   $('summary').classList.add('on');
 }
 
 // ── UI HELPERS ────────────────────────────────────────────────────────────────
+function updateGateUI(){
+  const btn=$('btn-gate');if(!btn) return;
+  const set=!!_gateEntryRef[S.ex.id];
+  btn.classList.toggle('set',set);
+  btn.textContent=set?'⬟ 게이트 ✓':'⬟ 게이트';
+  btn.title=set
+    ?'게이트 진입 자세 설정됨 — 탭하면 해제합니다\n(기준 자세 방향으로 지나갈 때만 피드백)'
+    :'기준 자세에 진입하기 직전 자세(예: 백스윙 탑)를 카메라에 비추고 탭하세요';
+}
 function updateRefUI(){
   const L=TX[CL],r=S.refs[S.ex.id];
   let dt='';
@@ -2914,6 +3025,7 @@ function updateRefUI(){
   $('ref-dsc').textContent=r?dt:L.ref_none_dsc;
   if(!$('btn-ref-start').classList.contains('recording'))
     $('btn-ref-start').textContent=r?L.btn_ref_start_redo:L.btn_ref_start;
+  updateGateUI();
 }
 let _renameTarget=null; // exercise object being renamed
 function openRenameModal(ex){
@@ -3482,93 +3594,17 @@ function drawPosOverlay(kps, pos){
     ctx.strokeStyle='rgba(33,150,243,.55)'; ctx.lineWidth=1.8; ctx.stroke();
     ctx.setLineDash([]);
     if(pos.hipShift!=null){
-      const label=(pos.hipShift>0?'+':'')+pos.hipShift;
-      const shCol=posCol('hipShift');
+      const hs=(pos.hipShift>0?'+':'')+pos.hipShift;
       ctx.font='bold 12px -apple-system,sans-serif';
-      ctx.strokeStyle='rgba(0,0,0,.8)';ctx.lineWidth=3;
-      ctx.strokeText(label,mh.x+8,mh.y+14);
-      ctx.fillStyle=shCol;ctx.fillText(label,mh.x+8,mh.y+14);
+      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3;
+      ctx.strokeText(hs,mh.x+10,mh.y+20);
+      ctx.fillStyle=posCol('hipShift');ctx.fillText(hs,mh.x+10,mh.y+20);
     }
     ctx.restore();
   }
-
-  // ── ⑤ 무릎 정렬 편차선 ─────────────────────────────────────────────────────
-  function drawKneeLine(hip, knee, ank, kneeOff){
-    if(!ok(hip)||!ok(knee)||!ok(ank)) return;
-    const dy = hip.y - ank.y;
-    if(Math.abs(dy)<0.02) return;
-    const t = (knee.y-ank.y)/dy;
-    const expX = ank.x + t*(hip.x-ank.x);
-    const expP = coverXY({x:expX, y:knee.y, score:1});
-    const kneeP = coverXY(knee);
-    const dist = Math.abs(kneeP.x-expP.x);
-    if(dist < 4) return;
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(expP.x,expP.y); ctx.lineTo(kneeP.x,kneeP.y);
-    ctx.strokeStyle = dist>18 ? 'rgba(244,67,54,.85)' : 'rgba(255,193,7,.85)';
-    ctx.lineWidth=3; ctx.lineCap='round'; ctx.stroke();
-    ctx.restore();
-  }
-  drawKneeLine(lHip,lKnee,lAnk,pos.lKneeOff);
-  drawKneeLine(rHip,rKnee,rAnk,pos.rKneeOff);
 }
 
-// ── FORCE CAMERA RESTART (replaces _recoverCameraLive) ────────────────────────
-// Always stops existing tracks and gets fresh stream — fixes iOS black frames
-// where tracks appear 'live' but deliver black content after returning from photos.
-async function _recoverCameraLive(){  // kept as alias; real logic below
-  return _forceCameraRestart();
-}
-async function _forceCameraRestart(){
-  if(_srcMode!=='camera'||_camBusy||S.caps) return;
-  _camBusy=true;
-  const wasLive=S.live;
-  // Stop rAF during restart
-  if(S.raf){cancelAnimationFrame(S.raf);S.raf=null;}
-  try{
-    // ── Mirror switchCamera pattern exactly ──
-    // Get new stream FIRST (iOS: stop-first → hardware releases → black frames)
-    let newStream=null;
-    const tries=[
-      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false},
-      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920},height:{ideal:1080}},audio:false},
-      {video:{facingMode:S.facingMode},audio:false},
-      {video:true,audio:false},
-    ];
-    for(const c of tries){
-      try{newStream=await navigator.mediaDevices.getUserMedia(c);break;}
-      catch(e){console.warn('CamRestart attempt:',e.message);}
-    }
-    if(!newStream){
-      if(wasLive){S.raf=requestAnimationFrame(loop);}
-      return;
-    }
-    if(S.stream) S.stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});
-    S.stream=newStream;
-    vid.srcObject=newStream;
-    vid.load(); // iOS hardware rebind
-    try{await waitForVideo(3000);}catch(e){console.warn('waitForVideo timeout');}
-    await vid.play().catch(()=>{});
-    vid.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
-    cvs.style.transform=S.facingMode==='user'?'scaleX(-1)':'';
-    resizeCam();
-    if(wasLive){S.raf=requestAnimationFrame(loop);}
-  }finally{
-    _camBusy=false; // ALWAYS release — prevents permanent lock on any failure
-  }
-}
-
-// Zone-entry feedback globals
-let _zoneEntryAt=0;
-let _zoneEntryFbGiven=false;
-const _MIN_FB_GAP=3000;
-let _pendingSaveBlob=null;   // recorded video blob waiting for user-gesture share
-let _pendingSaveName='';
-let _feedZone=false;       // current feed-zone state (for transition detection)
-let _hasExitedZone=false;  // true once user has left zone; required before re-entry triggers feedback
-
-// ── INIT ──────────────────────────────────────────────────────────────────────
+// ── INIT ─────────────────────────────────────────────────────────────────────
 async function init(){
   setAppHeight(); // viewport 높이 즉시 보정
   for(const ex of EXERCISES){
@@ -3581,6 +3617,10 @@ async function init(){
     try{
       const praw=localStorage.getItem('apl_posref_'+ex.id);
       if(praw){const pd=JSON.parse(praw);_posRef[ex.id]=pd.pos;}
+    }catch(e){}
+    try{
+      const graw=localStorage.getItem('apl_gate_'+ex.id);
+      if(graw){_gateEntryRef[ex.id]=JSON.parse(graw);}
     }catch(e){}
   }
   buildExChips();updateRefUI();
@@ -3597,13 +3637,55 @@ async function init(){
   $('rename-input').addEventListener('keydown',e=>{if(e.key==='Enter')confirmRename();if(e.key==='Escape')closeRenameModal();});
   $('rename-modal').addEventListener('click',e=>{if(e.target===$('rename-modal'))closeRenameModal();});
   $('btn-ref-start').addEventListener('click',startRefRecording);
+  $('btn-ref-stop').addEventListener('click',stopRefRecording);
   $('btn-ref-file').addEventListener('click',openRefFileUpload);
+  $('btn-gate').addEventListener('click',()=>{
+    if(S.live||S.caps) return;
+    const id=S.ex.id;
+    if(_gateEntryRef[id]){
+      delete _gateEntryRef[id];
+      try{localStorage.removeItem('apl_gate_'+id);}catch(e){}
+    } else {
+      if(!_lastAngles){
+        $('fb-txt').textContent='자세를 먼저 카메라에 비춰주세요';
+        setTimeout(()=>{$('fb-txt').textContent='';},2500);
+        return;
+      }
+      _gateEntryRef[id]={..._lastAngles};
+      try{localStorage.setItem('apl_gate_'+id,JSON.stringify(_gateEntryRef[id]));}catch(e){}
+    }
+    updateGateUI();
+  });
   $('ref-file-input').addEventListener('change',onRefFileSelected);
+  $('fp-close').addEventListener('click',closeFramePicker);
+  $('fp-save').addEventListener('click',saveRefFrame);
   $('fp-photo').addEventListener('click',saveFpPhoto);
+  $('fp-prev').addEventListener('click',()=>{
+    const fpv=$('fp-vid');fpv.currentTime=Math.max(0,fpv.currentTime-1/30);
+  });
+  $('fp-next').addEventListener('click',()=>{
+    const fpv=$('fp-vid');fpv.currentTime=Math.min(fpv.duration||999,fpv.currentTime+1/30);
+  });
+  $('fp-scrub').addEventListener('input',()=>{
+    const fpv=$('fp-vid'),dur=fpv.duration||1,max=parseInt($('fp-scrub').max)||1000;
+    fpv.currentTime=(parseInt($('fp-scrub').value)/max)*dur;
+  });
+  $('fp-vid').addEventListener('seeked',()=>{
+    _updateFpTime();_scheduleDetect();
+    const fpv=$('fp-vid'),dur=fpv.duration||1,max=parseInt($('fp-scrub').max)||1000;
+    $('fp-scrub').value=Math.round((fpv.currentTime/dur)*max);
+  });
   $('btn-data-open').addEventListener('click',openDataModal);
   $('btn-data-close').addEventListener('click',closeDataModal);
   $('btn-data-copy-all').addEventListener('click',copyAllData);
-  // Joint selection: checkbox.change prevents label double-toggle
+  $('btn-lang').addEventListener('click',(e)=>{
+    e.stopPropagation();$('lang-picker').classList.toggle('on');
+  });
+  document.querySelectorAll('.lpopt').forEach(el=>{
+    el.addEventListener('click',()=>{CL=el.dataset.lang;$('lang-picker').classList.remove('on');applyLang();});
+  });
+  document.addEventListener('click',()=>$('lang-picker').classList.remove('on'));
+  // Joint selection checkboxes
   for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
     const lbl=$('jsel-'+k);if(!lbl) continue;
     const cb=lbl.querySelector('input');
@@ -3632,52 +3714,31 @@ async function init(){
     if(e.key==='Enter')_tryUnlock();
     if(e.key==='Escape'){$('prm-modal').classList.remove('on');_pendingPremiumCb=null;}
   });
-  if(_hasPremiumStored())_setPremium(true);
-  $('data-search').addEventListener('input',e=>renderDataList(e.target.value));
-  $('data-modal').addEventListener('click',e=>{if(e.target===$('data-modal'))closeDataModal();});
-  $('btn-data-del-all').addEventListener('click',deleteAllData);
-  // 사진 모드 이름 모달
-  $('img-name-confirm').addEventListener('click',()=>{
-    const name=$('img-name-input').value.trim();
-    if(!name){$('img-name-input').classList.add('required');$('img-name-input').focus();
-      setTimeout(()=>$('img-name-input').classList.remove('required'),600);return;}
-    _processImgRef(name);
+  // Source mode (camera / file)
+  const _srcBtns=document.querySelectorAll('.srcbtn');
+  _srcBtns.forEach(b=>{
+    b.addEventListener('click',()=>{
+      if(S.live||S.caps) return;
+      _srcBtns.forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');_srcMode=b.dataset.src;
+      if(_srcMode==='file'){
+        $('ana-file-input').click();
+      } else {
+        if(_anaFileURL){URL.revokeObjectURL(_anaFileURL);_anaFileURL=null;}
+        vid.srcObject=S.stream;vid.play().catch(()=>{});
+      }
+    });
   });
-  $('img-name-cancel').addEventListener('click',()=>{
-    $('img-name-modal').classList.remove('on');_pendingImgFile=null;
+  $('ana-file-input').addEventListener('change',e=>{
+    const file=e.target.files[0];if(!file) return;
+    if(_anaFileURL){URL.revokeObjectURL(_anaFileURL);_anaFileURL=null;}
+    _anaFileURL=URL.createObjectURL(file);
+    vid.srcObject=null;vid.src=_anaFileURL;
+    vid.load();vid.play().catch(()=>{});
   });
-  $('img-name-input').addEventListener('keydown',e=>{
-    if(e.key==='Enter'){$('img-name-confirm').click();}
-    if(e.key==='Escape'){$('img-name-cancel').click();}
-  });
-  $('ana-file-input').addEventListener('change',onAnaFileSelected);
-  $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));
-  $('src-file-btn').addEventListener('click',()=>switchSrcMode('file'));
-  $('btn-ref-stop').addEventListener('click',stopRefRecording);
-  $('fp-close').addEventListener('click',closeFramePicker);
-  $('fp-save').addEventListener('click',saveRefFrame);
-  $('fp-prev').addEventListener('click',()=>{
-    const fpv=$('fp-vid');fpv.currentTime=Math.max(0,fpv.currentTime-1/30);
-  });
-  $('fp-next').addEventListener('click',()=>{
-    const fpv=$('fp-vid');fpv.currentTime=Math.min(fpv.duration||999,fpv.currentTime+1/30);
-  });
-  $('fp-scrub').addEventListener('input',()=>{
-    const fpv=$('fp-vid'),dur=fpv.duration||1,max=parseInt($('fp-scrub').max)||1000;
-    fpv.currentTime=(parseInt($('fp-scrub').value)/max)*dur;
-  });
-  $('fp-vid').addEventListener('seeked',()=>{
-    _updateFpTime();_scheduleDetect();
-    const fpv=$('fp-vid'),dur=fpv.duration||1,max=parseInt($('fp-scrub').max)||1000;
-    $('fp-scrub').value=Math.round((fpv.currentTime/dur)*max);
-  });
-  $('btn-lang').addEventListener('click',(e)=>{
-    e.stopPropagation();$('lang-picker').classList.toggle('on');
-  });
-  document.querySelectorAll('.lpopt').forEach(el=>{
-    el.addEventListener('click',()=>{CL=el.dataset.lang;$('lang-picker').classList.remove('on');applyLang();});
-  });
-  document.addEventListener('click',()=>$('lang-picker').classList.remove('on'));
+  $('btn-share').addEventListener('click',shareRecording);
+  const _saveBtn=$('btn-sum-save');
+  if(_saveBtn) _saveBtn.addEventListener('click',()=>{requirePremium(()=>{shareRecording(true);});});
   $('btn-main').addEventListener('click',()=>{
     if(!S.ready) return;
     if(S.live)stopLive();else startLive();
@@ -3685,118 +3746,34 @@ async function init(){
   $('btn-flip-hdr').addEventListener('click',switchCamera);
   $('btn-sum-close').addEventListener('click',()=>{
     $('summary').classList.remove('on');
-    const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';
-    _pendingSaveBlob=null;_pendingSaveName='';
-    setTimeout(()=>{
-      if(_srcMode==='camera'){
-        // Use _forceCameraRestart (not checkCameraHealth) — detects muted/black-frame state
-        // even when track.readyState appears 'live' (common after iOS backgrounding)
-        _forceCameraRestart();
-      }else if(vid.readyState<2||vid.videoWidth===0) restartCamera();
-    },400);
+    setTimeout(checkCameraHealth,300);
   });
-  $('btn-sum-save').addEventListener('click',()=>{
-    if(!_pendingSaveBlob) return;
-    if(!S.premium){requirePremium(()=>{if(_pendingSaveBlob)$('btn-sum-save').click();});return;}
-    const blob=_pendingSaveBlob, fname=_pendingSaveName;
-    const file=new File([blob],fname,{type:blob.type,lastModified:Date.now()});
-    const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const _clearSave=()=>{
-      _pendingSaveBlob=null;_pendingSaveName='';
-      const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';
-    };
-    if(isIOS){
-      // iOS: skip canShare() — unreliable on older versions. Try share directly.
-      // Share sheet → "비디오 저장" → 사진 앱에 저장
-      if(navigator.share){
-        navigator.share({files:[file],title:'APL Motion Coach',text:fname})
-          .then(_clearSave)
-          .catch(err=>{
-            if(err.name==='AbortError') return; // user cancelled — keep blob
-            // share() API exists but failed (no file support) → open in new tab
-            const u=URL.createObjectURL(blob);
-            window.open(u,'_blank');
-            setTimeout(()=>URL.revokeObjectURL(u),60000);
-            alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
-            _clearSave();
-          });
-      } else {
-        // Very old iOS without share API: open blob URL in new tab
-        const u=URL.createObjectURL(blob);
-        window.open(u,'_blank');
-        setTimeout(()=>URL.revokeObjectURL(u),60000);
-        alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
-        _clearSave();
-      }
-    } else if(navigator.canShare&&navigator.canShare({files:[file]})){
-      navigator.share({files:[file],title:'APL Motion Coach',text:fname})
-        .then(_clearSave)
-        .catch(err=>{if(err.name!=='AbortError'){downloadVideo(blob,fname);_clearSave();}});
-    } else {
-      downloadVideo(blob,fname);
-      _clearSave();
-    }
-  });
-  // ── Camera initialization ───────────────────────────────────────────────────
+
+  $('i-msg').textContent='카메라 시작 중...';
   try{
     const stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:'environment'},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false});
+      video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
     S.stream=stream;vid.srcObject=stream;
     await new Promise(r=>{vid.onloadedmetadata=r;});
     vid.play();resizeCam();
-    setAppHeight();
     window.addEventListener('resize',()=>{setAppHeight();resizeCam();});
     vid.addEventListener('loadeddata',resizeCam);
-    // Force camera restart on foreground return (iOS black-frame fix)
     document.addEventListener('visibilitychange',()=>{
-      if(document.visibilityState==='visible'){
-        setAppHeight();
-        // muted 트랙에 applyConstraints 시도 (분석 중 백그라운드 복귀)
-        if(_srcMode==='camera'&&S.stream){
-          const _tracks=S.stream.getVideoTracks();
-          _tracks.forEach(t=>{if(t.muted) t.applyConstraints({}).catch(()=>{});});
-        }
-        if(_srcMode==='camera'&&!S.live&&!S.caps){
-          // First attempt at 800ms; second at 2s; third at 4s
-          setTimeout(restartCamera,800);
-          setTimeout(()=>{
-            if(!S.live&&!S.caps){
-              const tracks=S.stream?S.stream.getVideoTracks():[];
-              const muted=tracks.length>0&&tracks.every(t=>t.muted);
-              if(vid.paused||vid.readyState<2||muted)restartCamera();
-            }
-          },2000);
-          setTimeout(()=>{
-            if(!S.live&&!S.caps){
-              const tracks=S.stream?S.stream.getVideoTracks():[];
-              const muted=tracks.length>0&&tracks.every(t=>t.muted);
-              if(vid.paused||vid.readyState<2||muted)restartCamera();
-            }
-          },4000);
-        } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },300);
-      }
+      if(document.visibilityState==='visible') setTimeout(checkCameraHealth,400);
     });
-    // iOS bfcache: pageshow with persisted=true means page restored from cache
-    window.addEventListener('pageshow',e=>{
-      if(e.persisted&&_srcMode==='camera'&&!S.live&&!S.caps){
-        setTimeout(restartCamera,500);
-      }
-    });
-    vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera') checkCameraHealth();});
-    vid.addEventListener('ended',()=>{if(_srcMode==='camera') checkCameraHealth();});
-    // Periodic health check every 3s (lightweight)
+    vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps) checkCameraHealth();});
+    vid.addEventListener('ended',()=>checkCameraHealth());
     setInterval(()=>{
-      if(!S.live&&!S.caps&&document.visibilityState==='visible'&&_srcMode==='camera'){
-        const tracks=S.stream?S.stream.getVideoTracks():[];
-        const muted=tracks.length>0&&tracks.every(t=>t.muted);
-        if(vid.paused||vid.readyState<2||muted) checkCameraHealth();
+      if(!S.live&&!S.caps&&document.visibilityState==='visible'){
+        if(vid.paused||vid.readyState<2) checkCameraHealth();
       }
     },3000);
+    $('cam-wrap').addEventListener('touchstart',fixIOSAudioRouting,{once:true});
   }catch(e){
+    console.error('Camera:',e);
     $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';
   }
 
-  // ── AI 포즈 감지 모델 로드 ──────────────────────────────────────────────────
   $('mdl-txt').textContent=TX[CL].mdl_loading||'로딩 중';
   try{
     S.det=await poseDetection.createDetector(

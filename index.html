@@ -1711,6 +1711,8 @@ let _introUntil=0;     // epoch ms — show APL logo intro until this time
 let _recAudioCtx=null, _recAudioDest=null; // AudioContext for recording mix
 let _recStartTimer=null; // setTimeout handle for delayed recorder.start()
 let _drawRafId=null;    // requestAnimationFrame handle for composite draw loop
+let _recStartMs=0;      // epoch ms when recorder.start() fired (wall-clock fix)
+let _recWallMs=0;       // actual recording duration ms (passed to patchMP4)
 let _srcMode='camera'; // 'camera' | 'file' — analysis source mode
 let _anaFileURL=null;  // blob URL for uploaded analysis video
 
@@ -2012,7 +2014,7 @@ async function startRecording(){
              catch(e2){S.recorder=new MediaRecorder(compStream);}}
   }
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)_sessionChunks.push(e.data);};
-  S.recorder.onstop=()=>saveRecording(_sessionChunks);
+  S.recorder.onstop=()=>saveRecording(_sessionChunks,_recWallMs);
 
   // Pre-draw current video frame so canvas is never empty when recording starts
   try{compCtx.drawImage(vid,0,0,cw,ch);drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
@@ -2036,6 +2038,7 @@ async function startRecording(){
       // with wrong duration (1,988+ hours). start() delivers one properly-formed video file.
       try{S.recorder.start();}
       catch(e){console.warn('Recorder start:',e);}
+      _recStartMs=Date.now(); // wall-clock start for timestamp correction
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
       S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
@@ -2048,6 +2051,9 @@ function updateRecTime(){
   $('rec-time').textContent='⏺ '+m+':'+s;
 }
 function stopRecording(){
+  // Capture wall-clock duration BEFORE stopping anything
+  _recWallMs=_recStartMs>0?Math.max(Date.now()-_recStartMs,1000):0;
+  _recStartMs=0;
   _compDrawing=false;
   _coachOverlay=null;
   _introUntil=0;
@@ -2075,17 +2081,20 @@ function stopRecording(){
     else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording(S.recChunks);
   }
   // audioStream 정리 (녹화 종료 후)
-  if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;}
+  if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;
+    // iOS: mic 종료 시 카메라 하드웨어가 일시 정지될 수 있음 → 재시작 보장
+    if(_srcMode==='camera'){setTimeout(()=>{if(!S.live&&!S.caps)checkCameraHealth();},1200);}
+  }
   // Delay AudioContext close to 3s — gives recorder.onstop time to fire and encode audio
   setTimeout(()=>{
     if(_recAudioCtx){_recAudioCtx.close().catch(()=>{});_recAudioCtx=null;_recAudioDest=null;}
   },3000);
 }
 // ── fMP4 timestamp patcher ────────────────────────────────────────────────
-// iOS MediaRecorder writes wrong per-sample durations in trun boxes:
-//   sample[0].dur=23 (correct ~26fps), sample[1..N-1].dur=1 (WRONG 600fps),
-//   sample[N].dur=4,294,967,177 (WRONG 7,158,278s). Fixes all three + metadata.
-async function patchMP4Timestamps(blob){
+// iOS MediaRecorder writes wrong per-sample durations in trun boxes.
+// wallMs: actual wall-clock recording duration (ms). Used to force-correct
+// video track sample durations when iOS writes wrong values (e.g. 56fps with mic).
+async function patchMP4Timestamps(blob,wallMs){
   try{
     const ab=await blob.arrayBuffer();
     const u8=new Uint8Array(ab);
@@ -2118,8 +2127,42 @@ async function patchMP4Timestamps(blob){
       const mdhd=find(mdia.dp,mdia.pos+mdia.size,'mdhd');if(!mdhd)continue;
       const mv=u8[mdhd.dp];
       const ts=u32(mdhd.dp+(mv===1?20:12));
-      trackMeta[tid]={ts,tkhdDp:tkhd.dp,tkhdVer:tv,mdhdDp:mdhd.dp,mdhdVer:mv,totalDur:0};
+      // Detect video vs audio track via hdlr handler_type ('vide' or 'soun')
+      const hdlr=find(mdia.dp,mdia.pos+mdia.size,'hdlr');
+      const htype=hdlr?String.fromCharCode(u8[hdlr.dp+8],u8[hdlr.dp+9],u8[hdlr.dp+10],u8[hdlr.dp+11]):'';
+      const isVideo=htype==='vide';
+      trackMeta[tid]={ts,tkhdDp:tkhd.dp,tkhdVer:tv,mdhdDp:mdhd.dp,mdhdVer:mv,totalDur:0,isVideo};
     }
+    // ── Preliminary pass: count total samples per track for wall-clock correction ──
+    // iOS+mic often produces per-sample durations at wrong fps (e.g. 56fps instead of 18fps).
+    // Using wall-clock time, we compute the exact correct duration per sample.
+    const trackSampleCount={};
+    for(const moof0 of findAll(0,N,'moof')){
+      for(const traf0 of findAll(moof0.dp,moof0.pos+moof0.size,'traf')){
+        const tfhd0=find(traf0.dp,traf0.pos+traf0.size,'tfhd');if(!tfhd0)continue;
+        const tid0=u32(tfhd0.dp+4);
+        if(!(tid0 in trackSampleCount))trackSampleCount[tid0]=0;
+        for(const trun0 of findAll(traf0.dp,traf0.pos+traf0.size,'trun')){
+          trackSampleCount[tid0]+=u32(trun0.dp+4); // sample_count field
+        }
+      }
+    }
+    // wallCorrDur[tid]: exact per-sample duration ticks based on actual recording time
+    const wallCorrDur={};
+    const wallSec=wallMs&&wallMs>1000?wallMs/1000:0;
+    if(wallSec>0){
+      for(const [id,meta] of Object.entries(trackMeta)){
+        const n=trackSampleCount[id]||0;
+        if(meta.isVideo&&n>0){
+          const corrDur=Math.round(meta.ts*wallSec/n);
+          // Only use if corrected fps is in reasonable range (8~120fps)
+          const corrFps=meta.ts/corrDur;
+          if(corrFps>=8&&corrFps<=120) wallCorrDur[id]=corrDur;
+          console.log(`[patchMP4] t${id} video: ${n}samples ${wallSec.toFixed(2)}s → corrDur=${corrDur}(${corrFps.toFixed(1)}fps)`);
+        }
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────────
     let anyFixed=false;
     const trackNext={};
     for(const moof of findAll(0,N,'moof')){
@@ -2150,6 +2193,8 @@ async function patchMP4Timestamps(blob){
             anyFixed=true;
           }
         }
+        // Wall-clock corrected duration overrides everything for video tracks
+        const wcd=wallCorrDur[tid]; // undefined for audio tracks or if no wallMs
         let fragDur=0;
         for(const trun of findAll(traf.dp,traf.pos+traf.size,'trun')){
           const tf=u32(trun.dp)&0xFFFFFF;const sc=u32(trun.dp+4);
@@ -2159,10 +2204,19 @@ async function patchMP4Timestamps(blob){
           for(let i=0;i<sc;i++){
             if(hasDur){
               const dur=u32(to);
-              if(dur<minDur||dur>maxDur){dst.setUint32(to,fixDur>>>0);fragDur+=fixDur;anyFixed=true;}
-              else fragDur+=dur;
+              if(wcd&&wcd!==dur){
+                // Video track: force wall-clock corrected duration
+                dst.setUint32(to,wcd>>>0);fragDur+=wcd;anyFixed=true;
+              } else if(!wcd&&(dur<minDur||dur>maxDur)){
+                dst.setUint32(to,fixDur>>>0);fragDur+=fixDur;anyFixed=true;
+              } else {
+                fragDur+=dur;
+              }
               to+=4;
-            }else fragDur+=defDur;
+            }else{
+              // No per-sample duration: use wall-clock corrected value or defDur
+              fragDur+=wcd||defDur;
+            }
             if(hasSz)to+=4; if(hasFlg)to+=4; if(hasCTO)to+=4;
           }
         }
@@ -2170,7 +2224,7 @@ async function patchMP4Timestamps(blob){
         meta.totalDur+=fragDur;
       }
     }
-    if(!anyFixed)return blob;
+    if(!anyFixed&&Object.keys(wallCorrDur).length===0)return blob;
     let maxMovieDur=0;
     for(const m of Object.values(trackMeta)){
       if(m.ts&&m.totalDur){const d=Math.round(m.totalDur*movieTS/m.ts);if(d>maxMovieDur)maxMovieDur=d;}
@@ -2194,7 +2248,7 @@ async function patchMP4Timestamps(blob){
   }catch(e){console.warn('[patchMP4]',e);return blob;}
 }
 
-async function saveRecording(chunks){
+async function saveRecording(chunks,wallMs){
   if(!chunks||!chunks.length){
     const _sb=$('btn-sum-save');
     if(_sb&&_sb.style.display==='none'){
@@ -2212,7 +2266,7 @@ async function saveRecording(chunks){
   const rawBlob=new Blob(chunks,{type:saveMime});
   // iOS: fix fMP4 timestamps (wrong trun durations → 100x speed)
   const _isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const blob=_isIOS?await patchMP4Timestamps(rawBlob):rawBlob;
+  const blob=_isIOS?await patchMP4Timestamps(rawBlob,wallMs||0):rawBlob;
   const now=new Date();
   const stamp=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
   const exName=S.ex.name;
@@ -3273,11 +3327,23 @@ async function init(){
       if(document.visibilityState==='visible'){
         setAppHeight();
         if(_srcMode==='camera'&&!S.live&&!S.caps){
-          // First attempt at 800ms; second at 2s in case iOS camera hardware is slow to wake
+          // First attempt at 800ms; second at 2s; third at 4s
           setTimeout(restartCamera,800);
           setTimeout(()=>{
-            if(!S.live&&!S.caps&&(vid.paused||vid.readyState<2))restartCamera();
+            if(!S.live&&!S.caps){
+              const tracks=S.stream?S.stream.getVideoTracks():[];
+              // muted=true: iOS froze camera hardware (shows still frame)
+              const muted=tracks.length>0&&tracks.every(t=>t.muted);
+              if(vid.paused||vid.readyState<2||muted)restartCamera();
+            }
           },2000);
+          setTimeout(()=>{
+            if(!S.live&&!S.caps){
+              const tracks=S.stream?S.stream.getVideoTracks():[];
+              const muted=tracks.length>0&&tracks.every(t=>t.muted);
+              if(vid.paused||vid.readyState<2||muted)restartCamera();
+            }
+          },4000);
         } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{ if(vid.readyState<2) restartCamera(); },300);
       }
     });
@@ -3292,7 +3358,9 @@ async function init(){
     // Periodic health check every 3s (lightweight — only acts if something is wrong)
     setInterval(()=>{
       if(!S.live&&!S.caps&&document.visibilityState==='visible'&&_srcMode==='camera'){
-        if(vid.paused||vid.readyState<2) checkCameraHealth();
+        const tracks=S.stream?S.stream.getVideoTracks():[];
+        const muted=tracks.length>0&&tracks.every(t=>t.muted);
+        if(vid.paused||vid.readyState<2||muted) checkCameraHealth();
       }
     },3000);
     $('cam-wrap').addEventListener('touchstart',fixIOSAudioRouting,{once:true});

@@ -1126,7 +1126,10 @@ function kpColor(idx,cmp){
 }
 function drawFrame(kps,cmp){
   ctx.clearRect(0,0,cvs.width,cvs.height);
+  const _frontal=isFrontal();
   for(const[i,j]of SKEL){
+    // 정면/후면: 어깨↔골반 측면선 제거 (몸통기울기 선으로 대체)
+    if(_frontal&&((i===5&&j===11)||(i===6&&j===12))) continue;
     const a=kps[i],b=kps[j];
     if(!a||!b||a.score<CONF||b.score<CONF) continue;
     const pa=coverXY(a),pb=coverXY(b);
@@ -1141,8 +1144,46 @@ function drawFrame(kps,cmp){
     ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
   }
   if(isFrontal()&&_lastPos) drawPosOverlay(kps,_lastPos);
-  if(cmp){
-    // offset: +x/+y means right/down from keypoint
+  if(isFrontal()&&_lastPos){
+    // 정면/후면 모드: 관절에 기울기·위치 값 표시
+    const pos=_lastPos, pcmp=_lastPosCmp;
+    const ok=p=>p&&p.score>=CONF;
+    const lHip=kps[11],rHip=kps[12],lSh=kps[5],rSh=kps[6];
+    const lKnee=kps[13],rKnee=kps[14];
+    function _drawFrontLbl(x,y,text,col){
+      ctx.font='bold 13px -apple-system,sans-serif';
+      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3;
+      ctx.strokeText(text,x,y);ctx.fillStyle=col;ctx.fillText(text,x,y);
+    }
+    function _posCol(key){
+      const st=pcmp&&pcmp[key]?pcmp[key].st:'unk';
+      return ST_COL_POS[st]||'#fff';
+    }
+    // 어깨 기울기 — 어깨 연결선 중앙 위
+    if(ok(lSh)&&ok(rSh)&&pos.shoulderTilt!=null){
+      const mSh=coverXY({x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2,score:1});
+      const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓';
+      _drawFrontLbl(mSh.x-18,mSh.y-12,side+Math.abs(v)+'°',_posCol('shoulderTilt'));
+    }
+    // 골반 기울기 — 골반 연결선 중앙 위
+    if(ok(lHip)&&ok(rHip)&&pos.hipTilt!=null){
+      const mHip=coverXY({x:(lHip.x+rHip.x)/2,y:(lHip.y+rHip.y)/2,score:1});
+      const v=pos.hipTilt,side=v>0?'우↓':'좌↓';
+      _drawFrontLbl(mHip.x-18,mHip.y-8,side+Math.abs(v)+'°',_posCol('hipTilt'));
+    }
+    // 무릎 오프셋 — 각 무릎 옆
+    if(ok(lKnee)&&pos.lKneeOff!=null){
+      const p=coverXY(lKnee);
+      const v=pos.lKneeOff,t=(v>0?'+':'')+v;
+      _drawFrontLbl(p.x-32,p.y-6,t,_posCol('lKneeOff'));
+    }
+    if(ok(rKnee)&&pos.rKneeOff!=null){
+      const p=coverXY(rKnee);
+      const v=pos.rKneeOff,t=(v>0?'+':'')+v;
+      _drawFrontLbl(p.x+8,p.y-6,t,_posCol('rKneeOff'));
+    }
+  } else if(cmp){
+    // 측면 모드: 기존 각도값 표시
     const lblMap=[
       {i:13,k:'knee',dx:10,dy:-6},{i:14,k:'knee',dx:10,dy:-6},
       {i:11,k:'hip',dx:10,dy:-6},{i:12,k:'hip',dx:10,dy:-6},
@@ -1152,7 +1193,7 @@ function drawFrame(kps,cmp){
     for(const{i,k,dx,dy}of lblMap){
       const kp=kps[i];
       if(!kp||kp.score<CONF||!cmp[k]||cmp[k].cur===null) continue;
-      if(!S.jointSel[k]) continue; // skip deselected
+      if(!S.jointSel[k]) continue;
       const p=coverXY(kp),col=ST_COL[cmp[k].st]||'#fff',t=cmp[k].cur+'°';
       ctx.font='bold 13px -apple-system,sans-serif';
       ctx.strokeStyle='rgba(0,0,0,.8)';ctx.lineWidth=3;ctx.strokeText(t,p.x+dx,p.y+dy);
@@ -1825,8 +1866,11 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
   const sc=Math.max(compW/vw,compH/vh);
   const ox=(compW-vw*sc)/2,oy=(compH-vh*sc)/2;
   function xy(kp){return{x:kp.x*sc+ox,y:kp.y*sc+oy};}
+  const _frontal=isFrontal();
   // Skeleton lines
   for(const[i,j]of SKEL){
+    // 정면/후면: 어깨↔골반 측면선 제거 (몸통기울기 선으로 대체)
+    if(_frontal&&((i===5&&j===11)||(i===6&&j===12))) continue;
     const a=kps[i],b=kps[j];
     if(!a||!b||a.score<CONF||b.score<CONF) continue;
     const pa=xy(a),pb=xy(b);
@@ -1841,8 +1885,106 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
     ctx2.fillStyle=kpColor(i,cmp);ctx2.fill();
     ctx2.strokeStyle='#fff';ctx2.lineWidth=2.5;ctx2.stroke();
   }
-  // Angle labels
-  if(cmp){
+  // ── 정면/후면 모드: 오버레이 선 (어깨선, 골반선, 몸통기울기선, 무릎편차) ──
+  if(_frontal&&_lastPos){
+    const pos=_lastPos, pcmp2=_lastPosCmp;
+    const ok2=p=>p&&p.score>=CONF;
+    const lHip2=kps[11],rHip2=kps[12],lSh2=kps[5],rSh2=kps[6];
+    const lKnee2=kps[13],rKnee2=kps[14],lAnk2=kps[15],rAnk2=kps[16];
+    const lw=Math.max(2.5,compH/300);
+    function posCol2(key,al){
+      const st2=pcmp2&&pcmp2[key]?pcmp2[key].st:'unk';
+      const base=ST_COL_POS[st2]||'#2196F3';
+      if(!al) return base;
+      const r=parseInt(base.slice(1,3),16),g=parseInt(base.slice(3,5),16),b=parseInt(base.slice(5,7),16);
+      return `rgba(${r},${g},${b},${al})`;
+    }
+    function _lbl2(x,y,t,col){
+      const fs=Math.max(14,Math.round(compH*0.018));
+      ctx2.font=`bold ${fs}px -apple-system,sans-serif`;
+      ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=Math.max(3,lw*2);
+      ctx2.strokeText(t,x,y);ctx2.fillStyle=col;ctx2.fillText(t,x,y);
+    }
+    // 어깨 연결선
+    if(ok2(lSh2)&&ok2(rSh2)){
+      const pL=xy(lSh2),pR=xy(rSh2);
+      ctx2.save();ctx2.beginPath();ctx2.moveTo(pL.x,pL.y);ctx2.lineTo(pR.x,pR.y);
+      ctx2.strokeStyle=posCol2('shoulderTilt',.8);ctx2.lineWidth=lw*1.5;ctx2.lineCap='round';ctx2.stroke();ctx2.restore();
+    }
+    // 골반 연결선
+    if(ok2(lHip2)&&ok2(rHip2)){
+      const pL=xy(lHip2),pR=xy(rHip2);
+      ctx2.save();ctx2.beginPath();ctx2.moveTo(pL.x,pL.y);ctx2.lineTo(pR.x,pR.y);
+      ctx2.strokeStyle=posCol2('hipTilt',.8);ctx2.lineWidth=lw*1.5;ctx2.lineCap='round';ctx2.stroke();ctx2.restore();
+    }
+    // 몸통기울기 선 (어깨 중점 → 골반 중점)
+    if(ok2(lSh2)&&ok2(rSh2)&&ok2(lHip2)&&ok2(rHip2)){
+      const mSh=xy({x:(lSh2.x+rSh2.x)/2,y:(lSh2.y+rSh2.y)/2,score:1});
+      const mHip=xy({x:(lHip2.x+rHip2.x)/2,y:(lHip2.y+rHip2.y)/2,score:1});
+      const tc=posCol2('trunkLean',.9);
+      ctx2.save();ctx2.setLineDash([Math.round(compH*0.007),Math.round(compH*0.005)]);
+      ctx2.beginPath();ctx2.moveTo(mSh.x,mSh.y);ctx2.lineTo(mHip.x,mHip.y);
+      ctx2.strokeStyle=tc;ctx2.lineWidth=lw*1.2;ctx2.stroke();ctx2.setLineDash([]);
+      const mid2={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
+      ctx2.beginPath();ctx2.arc(mid2.x,mid2.y,Math.max(4,lw*1.5),0,Math.PI*2);ctx2.fillStyle=tc;ctx2.fill();
+      if(pos.trunkLean!=null){
+        const v2=pos.trunkLean,side2=v2>0?'우 ':'좌 ';
+        ctx2.textAlign='left';
+        _lbl2(mid2.x+lw*4,mid2.y-lw*2,side2+Math.abs(v2)+'°',tc);
+      }
+      ctx2.restore();
+    }
+    // 골반 수평이동 기준선
+    if(ok2(lHip2)&&ok2(rHip2)&&ok2(lAnk2)&&ok2(rAnk2)){
+      const mh2=xy({x:(lHip2.x+rHip2.x)/2,y:(lHip2.y+rHip2.y)/2,score:1});
+      const ma2=xy({x:(lAnk2.x+rAnk2.x)/2,y:(lAnk2.y+rAnk2.y)/2,score:1});
+      ctx2.save();ctx2.setLineDash([Math.round(compH*0.005),Math.round(compH*0.005)]);
+      ctx2.beginPath();ctx2.moveTo(mh2.x,mh2.y);ctx2.lineTo(ma2.x,ma2.y);
+      ctx2.strokeStyle='rgba(33,150,243,.5)';ctx2.lineWidth=lw;ctx2.stroke();ctx2.setLineDash([]);
+      if(pos.hipShift!=null){
+        const hs=(pos.hipShift>0?'+':'')+pos.hipShift;
+        ctx2.textAlign='left';_lbl2(mh2.x+lw*4,mh2.y+lw*8,hs,posCol2('hipShift'));
+      }
+      ctx2.restore();
+    }
+    // 무릎 편차선
+    function kneeLineComp(hip,knee,ank){
+      if(!ok2(hip)||!ok2(knee)||!ok2(ank)) return;
+      const dy=hip.y-ank.y;if(Math.abs(dy)<0.02) return;
+      const t2=(knee.y-ank.y)/dy;
+      const expX=ank.x+t2*(hip.x-ank.x);
+      const expP=xy({x:expX,y:knee.y,score:1}),kneeP=xy(knee);
+      const dist=Math.abs(kneeP.x-expP.x);
+      if(dist<4) return;
+      ctx2.save();ctx2.beginPath();ctx2.moveTo(expP.x,expP.y);ctx2.lineTo(kneeP.x,kneeP.y);
+      ctx2.strokeStyle=dist>18?'rgba(244,67,54,.85)':'rgba(255,193,7,.85)';
+      ctx2.lineWidth=lw*1.2;ctx2.lineCap='round';ctx2.stroke();ctx2.restore();
+    }
+    kneeLineComp(lHip2,lKnee2,lAnk2);
+    kneeLineComp(rHip2,rKnee2,rAnk2);
+    // 관절 레이블 (정면 모드)
+    ctx2.textAlign='left';
+    if(ok2(lSh2)&&ok2(rSh2)&&pos.shoulderTilt!=null){
+      const mSh=xy({x:(lSh2.x+rSh2.x)/2,y:(lSh2.y+rSh2.y)/2,score:1});
+      const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓';
+      _lbl2(mSh.x-Math.round(compW*0.06),mSh.y-lw*4,side+Math.abs(v)+'°',posCol2('shoulderTilt'));
+    }
+    if(ok2(lHip2)&&ok2(rHip2)&&pos.hipTilt!=null){
+      const mHip=xy({x:(lHip2.x+rHip2.x)/2,y:(lHip2.y+rHip2.y)/2,score:1});
+      const v=pos.hipTilt,side=v>0?'우↓':'좌↓';
+      _lbl2(mHip.x-Math.round(compW*0.06),mHip.y-lw*3,side+Math.abs(v)+'°',posCol2('hipTilt'));
+    }
+    if(ok2(lKnee2)&&pos.lKneeOff!=null){
+      const p=xy(lKnee2),v=pos.lKneeOff,t=(v>0?'+':'')+v;
+      _lbl2(p.x-Math.round(compW*0.08),p.y-lw*3,t,posCol2('lKneeOff'));
+    }
+    if(ok2(rKnee2)&&pos.rKneeOff!=null){
+      const p=xy(rKnee2),v=pos.rKneeOff,t=(v>0?'+':'')+v;
+      _lbl2(p.x+lw*3,p.y-lw*3,t,posCol2('rKneeOff'));
+    }
+  }
+  // Angle labels (측면 모드만)
+  if(cmp&&!_frontal){
     for(const{i,k}of[{i:13,k:'knee'},{i:14,k:'knee'},{i:11,k:'hip'},{i:12,k:'hip'}]){
       const kp=kps[i];
       if(!kp||kp.score<CONF||!cmp[k]||cmp[k].cur===null) continue;
@@ -3274,23 +3416,84 @@ function drawPosOverlay(kps, pos){
   if(!pos) return;
   const ok = p => p && p.score >= CONF;
   const lHip=kps[11], rHip=kps[12], lKnee=kps[13], rKnee=kps[14];
-  const lAnk=kps[15], rAnk=kps[16];
+  const lAnk=kps[15], rAnk=kps[16], lSh=kps[5], rSh=kps[6];
+  const pcmp=_lastPosCmp;
+  function posCol(key,alpha){
+    const st=pcmp&&pcmp[key]?pcmp[key].st:'unk';
+    const base=ST_COL_POS[st]||'#2196F3';
+    if(!alpha) return base;
+    // base is #RRGGBB — convert to rgba
+    const r=parseInt(base.slice(1,3),16),g=parseInt(base.slice(3,5),16),b=parseInt(base.slice(5,7),16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  // ── ① 어깨 연결선 (반투명 컬러 강조) ───────────────────────────────────────
+  if(ok(lSh)&&ok(rSh)){
+    const pL=coverXY(lSh), pR=coverXY(rSh);
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(pL.x,pL.y); ctx.lineTo(pR.x,pR.y);
+    ctx.strokeStyle=posCol('shoulderTilt',.75); ctx.lineWidth=3.5; ctx.lineCap='round'; ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── ② 골반 연결선 (반투명 컬러 강조) ───────────────────────────────────────
+  if(ok(lHip)&&ok(rHip)){
+    const pL=coverXY(lHip), pR=coverXY(rHip);
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(pL.x,pL.y); ctx.lineTo(pR.x,pR.y);
+    ctx.strokeStyle=posCol('hipTilt',.75); ctx.lineWidth=3.5; ctx.lineCap='round'; ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── ③ 몸통기울기 선: 어깨 중점 → 골반 중점 ────────────────────────────────
+  if(ok(lSh)&&ok(rSh)&&ok(lHip)&&ok(rHip)){
+    const mSh=coverXY({x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2,score:1});
+    const mHip=coverXY({x:(lHip.x+rHip.x)/2,y:(lHip.y+rHip.y)/2,score:1});
+    const trunkCol=posCol('trunkLean',.85);
+    ctx.save();
+    // 점선 몸통선
+    ctx.setLineDash([6,4]);
+    ctx.beginPath(); ctx.moveTo(mSh.x,mSh.y); ctx.lineTo(mHip.x,mHip.y);
+    ctx.strokeStyle=trunkCol; ctx.lineWidth=2.5; ctx.stroke();
+    ctx.setLineDash([]);
+    // 중점에 원
+    const mid={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
+    ctx.beginPath();ctx.arc(mid.x,mid.y,4,0,Math.PI*2);
+    ctx.fillStyle=trunkCol;ctx.fill();
+    // 몸통기울기 값 표시
+    if(pos.trunkLean!=null){
+      const v=pos.trunkLean,side=v>0?'우 ':'좌 ';
+      const t=side+Math.abs(v)+'°';
+      ctx.font='bold 12px -apple-system,sans-serif';
+      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3;
+      ctx.strokeText(t,mid.x+8,mid.y-2);
+      ctx.fillStyle=trunkCol;ctx.fillText(t,mid.x+8,mid.y-2);
+    }
+    ctx.restore();
+  }
+
+  // ── ④ 골반 수평 이동 기준선 (골반 중점 → 발목 중점) ────────────────────────
   if(ok(lHip)&&ok(rHip)&&ok(lAnk)&&ok(rAnk)){
     const mh = coverXY({x:(lHip.x+rHip.x)/2, y:(lHip.y+rHip.y)/2, score:1});
     const ma = coverXY({x:(lAnk.x+rAnk.x)/2, y:(lAnk.y+rAnk.y)/2, score:1});
     ctx.save();
-    ctx.setLineDash([5,4]); ctx.beginPath();
-    ctx.moveTo(mh.x,mh.y); ctx.lineTo(ma.x,ma.y);
-    ctx.strokeStyle='rgba(33,150,243,.7)'; ctx.lineWidth=2; ctx.stroke();
+    ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(mh.x,mh.y); ctx.lineTo(ma.x,ma.y);
+    ctx.strokeStyle='rgba(33,150,243,.55)'; ctx.lineWidth=1.8; ctx.stroke();
     ctx.setLineDash([]);
-    const label = (pos.hipShift>0?'+':'')+pos.hipShift;
-    ctx.font='bold 12px -apple-system,sans-serif';
-    ctx.strokeStyle='rgba(0,0,0,.8)'; ctx.lineWidth=3;
-    ctx.strokeText(label, mh.x+8, mh.y-4);
-    ctx.fillStyle='#2196F3'; ctx.fillText(label, mh.x+8, mh.y-4);
+    if(pos.hipShift!=null){
+      const label=(pos.hipShift>0?'+':'')+pos.hipShift;
+      const shCol=posCol('hipShift');
+      ctx.font='bold 12px -apple-system,sans-serif';
+      ctx.strokeStyle='rgba(0,0,0,.8)';ctx.lineWidth=3;
+      ctx.strokeText(label,mh.x+8,mh.y+14);
+      ctx.fillStyle=shCol;ctx.fillText(label,mh.x+8,mh.y+14);
+    }
     ctx.restore();
   }
-  function drawKneeLine(hip, knee, ank){
+
+  // ── ⑤ 무릎 정렬 편차선 ─────────────────────────────────────────────────────
+  function drawKneeLine(hip, knee, ank, kneeOff){
     if(!ok(hip)||!ok(knee)||!ok(ank)) return;
     const dy = hip.y - ank.y;
     if(Math.abs(dy)<0.02) return;
@@ -3307,8 +3510,8 @@ function drawPosOverlay(kps, pos){
     ctx.lineWidth=3; ctx.lineCap='round'; ctx.stroke();
     ctx.restore();
   }
-  drawKneeLine(lHip,lKnee,lAnk);
-  drawKneeLine(rHip,rKnee,rAnk);
+  drawKneeLine(lHip,lKnee,lAnk,pos.lKneeOff);
+  drawKneeLine(rHip,rKnee,rAnk,pos.rKneeOff);
 }
 
 // ── FORCE CAMERA RESTART (replaces _recoverCameraLive) ────────────────────────

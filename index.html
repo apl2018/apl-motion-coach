@@ -1715,6 +1715,7 @@ let _recStartTimer=null; // setTimeout handle for delayed recorder.start()
 let _drawRafId=null;    // requestAnimationFrame handle for composite draw loop
 let _recStartMs=0;      // epoch ms when recorder.start() fired (wall-clock fix)
 let _recWallMs=0;       // actual recording duration ms (passed to patchMP4)
+let _rafFrameCount=0;   // rAF 루프에서 실제 그린 프레임 수 (wall-clock 보정 정확도 향상)
 let _srcMode='camera'; // 'camera' | 'file' — analysis source mode
 let _anaFileURL=null;  // blob URL for uploaded analysis video
 
@@ -2015,7 +2016,10 @@ async function startRecording(){
              catch(e2){S.recorder=new MediaRecorder(compStream);}}
   }
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)_sessionChunks.push(e.data);};
-  S.recorder.onstop=()=>saveRecording(_sessionChunks,_recWallMs);
+  // wall-clock 보정은 iOS 카메라+마이크 모드에서만 필요 (mic이 trun duration을 56fps로 오염시키는 버그)
+  // 파일 모드에서는 보정 불필요 (보정 시 캔버스 멈춤 시간이 더해져 오히려 느려짐)
+  const _recIsCam=_srcMode==='camera';
+  S.recorder.onstop=()=>saveRecording(_sessionChunks,_recIsCam?_recWallMs:0);
 
   // Pre-draw current video frame so canvas is never empty when recording starts
   try{compCtx.drawImage(vid,0,0,cw,ch);drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
@@ -2024,11 +2028,13 @@ async function startRecording(){
   // (eliminates 0~0.12s black/intro issue at start of saved video)
   // Use RAF for display-sync drawing (replaces setInterval)
   _compDrawing=true; // already set above
+  _rafFrameCount=0;  // 매 녹화 시작 시 초기화
   // rAF draw loop: MoveNet await 사이에 실행되어 실제 fps 향상
   // captureStream(30)이 자동으로 30fps로 제한하므로 60fps로 요청해도 OK
   (function _rafDraw(){
     if(!_compDrawing)return;
     drawComp();
+    if(S.recorder&&S.recorder.state==='recording') _rafFrameCount++;
     _drawRafId=requestAnimationFrame(_rafDraw);
   })();
   _recStartTimer=setTimeout(()=>{
@@ -2053,7 +2059,14 @@ function updateRecTime(){
 }
 function stopRecording(){
   // Capture wall-clock duration BEFORE stopping anything
-  _recWallMs=_recStartMs>0?Math.max(Date.now()-_recStartMs,1000):0;
+  // rAF 기반으로 실제 그린 프레임 수를 보조 지표로 활용:
+  // 30fps 기준 예상 시간과 wall-clock 중 더 짧은 값을 사용
+  // (캔버스 멈춤이 wall-clock을 부풀려 느린 재생을 유발하는 문제 방지)
+  if(_recStartMs>0){
+    const _wallRaw=Date.now()-_recStartMs;
+    const _rafEst=_rafFrameCount>0?Math.round(_rafFrameCount*1000/30):_wallRaw;
+    _recWallMs=Math.max(Math.min(_wallRaw,_rafEst*1.15),1000);
+  }else{_recWallMs=0;}
   _recStartMs=0;
   _compDrawing=false;
   _coachOverlay=null;

@@ -1201,6 +1201,7 @@ async function _runDetection(){
     // Pass vid element directly — iOS Safari uses hardware-accelerated video texture path.
     // (Canvas elements require CPU→GPU copy which is 3-5x slower on iOS, causing fps regression)
     const poses=await S.det.estimatePoses(vid,{maxPoses:1,flipHorizontal:isUser});
+    if(!S.live||!S.det) return; // stopLive()가 await 중 호출됐을 경우 즉시 중단
     if(!poses||!poses.length){
       $('no-det').classList.add('on');$('chip').className='';
       _lastKps=null;_lastCmp=null;_lastAngles=null;

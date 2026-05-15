@@ -63,6 +63,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 .pm-refline{position:absolute;top:-3px;width:2px;height:12px;background:rgba(255,255,255,.45);
   transform:translateX(-50%);display:none}
 .pm-val{font-size:11px;font-weight:700;color:#fff;width:32px;text-align:right;flex-shrink:0}
+.pm-deg{font-size:12px;font-weight:800;flex:1;text-align:right;color:#fff;transition:color .2s}
+.pm-dot{width:8px;height:8px;border-radius:50%;background:#555;flex-shrink:0;transition:background .2s}
 .pm-lr{display:flex;gap:6px;flex:1}
 .pm-half{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px}
 .pm-sub{font-size:9px;color:rgba(255,255,255,.38);line-height:1}
@@ -504,20 +506,27 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <!-- Position mode bar (front/back view) -->
     <div id="pos-bar">
       <div class="pm-row">
-        <span class="pm-lbl">골반 이동</span>
-        <div class="pm-track">
-          <div class="pm-refline" id="pr-hip"></div>
-          <div class="pm-thumb" id="pt-hip" style="left:50%"></div>
-        </div>
-        <span class="pm-val" id="pv-hip">--</span>
+        <span class="pm-lbl">어깨 기울기</span>
+        <div class="pm-dot" id="pd-sh"></div>
+        <span class="pm-deg" id="pv-sh">--</span>
       </div>
       <div class="pm-row">
         <span class="pm-lbl">골반 기울기</span>
+        <div class="pm-dot" id="pd-hip"></div>
+        <span class="pm-deg" id="pv-hip">--</span>
+      </div>
+      <div class="pm-row">
+        <span class="pm-lbl">몸통 기울기</span>
+        <div class="pm-dot" id="pd-trk"></div>
+        <span class="pm-deg" id="pv-trk">--</span>
+      </div>
+      <div class="pm-row">
+        <span class="pm-lbl">골반 위치</span>
         <div class="pm-track">
-          <div class="pm-refline" id="pr-pel"></div>
-          <div class="pm-thumb" id="pt-pel" style="left:50%"></div>
+          <div class="pm-refline" id="pr-pos"></div>
+          <div class="pm-thumb" id="pt-pos" style="left:50%"></div>
         </div>
-        <span class="pm-val" id="pv-pel">--</span>
+        <span class="pm-val" id="pv-pos">--</span>
       </div>
       <div class="pm-row">
         <span class="pm-lbl">무릎 정렬</span>
@@ -531,6 +540,9 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
             <span class="pm-num" id="pv-rk">--</span>
           </div>
         </div>
+      </div>
+      <div class="pm-row" id="pm-sensor-row" style="justify-content:flex-end;margin-top:1px">
+        <span id="pm-sensor-lbl" style="font-size:9px;color:rgba(255,255,255,.35);letter-spacing:.3px">수평기준: 화면</span>
       </div>
     </div>
     <div id="cdown"><div id="cnum">5</div></div>
@@ -1201,6 +1213,8 @@ async function _runDetection(){
     // Pass vid element directly — iOS Safari uses hardware-accelerated video texture path.
     // (Canvas elements require CPU→GPU copy which is 3-5x slower on iOS, causing fps regression)
     const poses=await S.det.estimatePoses(vid,{maxPoses:1,flipHorizontal:isUser});
+    // GPU 결과 수신 후 즉시 브라우저 이벤트 루프에 제어권 반환 → rAF가 캔버스 프레임을 그릴 수 있음
+    await new Promise(r=>setTimeout(r,0));
     if(!S.live||!S.det) return; // stopLive()가 await 중 호출됐을 경우 즉시 중단
     if(!poses||!poses.length){
       $('no-det').classList.add('on');$('chip').className='';
@@ -1285,8 +1299,10 @@ function loop(){
     ctx.clearRect(0,0,cvs.width,cvs.height);
   }
   // ② Trigger async detection at DET_MS rate without blocking rAF
+  // 녹화 중에는 감지 간격을 2배로 늘려 rAF가 더 자주 실행 → 캔버스 프레임 끊김 방지
   const now=Date.now();
-  if(!_detPending&&now-_lastDet>=DET_MS&&vid.readyState>=2){
+  const _activeDET=(_compDrawing||(S.recorder&&S.recorder.state==='recording'))?DET_MS*2:DET_MS;
+  if(!_detPending&&now-_lastDet>=_activeDET&&vid.readyState>=2){
     _lastDet=now;_detPending=true;
     _runDetection(); // async — does not await here → rAF keeps running at 60fps
   }
@@ -1717,6 +1733,8 @@ let _drawRafId=null;    // requestAnimationFrame handle for composite draw loop
 let _recStartMs=0;      // epoch ms when recorder.start() fired (wall-clock fix)
 let _recWallMs=0;       // actual recording duration ms (passed to patchMP4)
 let _rafFrameCount=0;   // rAF 루프에서 실제 그린 프레임 수 (wall-clock 보정 정확도 향상)
+let _deviceGamma=0;     // phone left-right roll angle from DeviceOrientationEvent (°)
+let _sensorReady=false; // true once valid sensor data received
 let _srcMode='camera'; // 'camera' | 'file' — analysis source mode
 let _anaFileURL=null;  // blob URL for uploaded analysis video
 
@@ -1873,6 +1891,58 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       ctx2.fillText((c&&c.cur!=null)?c.cur+'°':'--°',cx2,iy+Math.round(ih*.8));
     }
     ctx2.restore();
+  } else {
+    // ── 정면/후면 모드: 기울기·위치 지표 패널 ──────────────────────────────
+    if(_lastPos){
+      const pos=_lastPos, cmp=_lastPosCmp;
+      const s=compH/960;
+      const ROWS=[
+        {lbl:'어깨기울기', key:'shoulderTilt', type:'tilt'},
+        {lbl:'골반기울기', key:'hipTilt',      type:'tilt'},
+        {lbl:'몸통기울기', key:'trunkLean',    type:'lean'},
+        {lbl:'골반위치',   key:'hipShift',     type:'shift'},
+        {lbl:'무릎L',      key:'lKneeOff',     type:'knee'},
+        {lbl:'무릎R',      key:'rKneeOff',     type:'knee'},
+      ];
+      const pw=Math.round(58*s), ih=Math.round(46*s), gap=Math.round(3*s), pad=Math.round(6*s);
+      const totalH=ROWS.length*(ih+gap)-gap+pad*2;
+      const px=compW-pw, py=Math.round((compH-totalH)/2);
+      ctx2.save(); ctx2.textAlign='center';
+      ctx2.fillStyle='rgba(8,8,18,.86)';
+      ctx2.fillRect(px,py,pw,totalH);
+      function fmtFront(v,type){
+        if(v==null) return '--';
+        if(type==='tilt'||type==='lean'){
+          const side=type==='tilt'?(v>0?'우↓':'좌↓'):(v>0?'우 ':'좌 ');
+          return side+Math.abs(v)+'°';
+        }
+        return (v>0?'+':'')+v;
+      }
+      for(let n=0;n<ROWS.length;n++){
+        const {lbl,key,type}=ROWS[n];
+        const val=pos[key]; const c2=cmp?cmp[key]:null;
+        const st=c2?c2.st:'unk';
+        const col=ST_COL_POS[st]||'#2196F3';
+        const iy=py+pad+n*(ih+gap);
+        const cx2=px+pw/2;
+        ctx2.fillStyle='rgba(255,255,255,.05)';
+        ctx2.fillRect(px+2,iy,pw-4,ih);
+        // 상태 도트
+        const dr=Math.max(3,Math.round(3.5*s));
+        ctx2.beginPath();ctx2.arc(cx2,iy+dr+Math.round(2*s),dr,0,Math.PI*2);
+        ctx2.fillStyle=val!=null?col:'#444'; ctx2.fill();
+        // 레이블
+        ctx2.font=`${Math.max(8,Math.round(8*s))}px sans-serif`;
+        ctx2.fillStyle='rgba(200,200,200,.9)';
+        ctx2.textBaseline='middle';
+        ctx2.fillText(lbl,cx2,iy+Math.round(ih*.46));
+        // 값
+        ctx2.font=`bold ${Math.max(10,Math.round(11*s))}px sans-serif`;
+        ctx2.fillStyle=val!=null?col:'#888';
+        ctx2.fillText(fmtFront(val,type),cx2,iy+Math.round(ih*.8));
+      }
+      ctx2.restore();
+    }
   }
 }
 
@@ -2520,6 +2590,8 @@ async function startLive(){
   // ① CRITICAL — iOS requires AudioContext creation in SYNCHRONOUS gesture handler
   //    Must happen before ANY await, otherwise iOS blocks AudioContext entirely
   fixIOSAudioRouting();
+  // 정면/후면 분석 수평 기준 보정용 센서 활성화 (iOS 13+는 제스처 컨텍스트 필요)
+  initOrientationSensor();
   // Pre-create recording AudioContext here (user gesture still active, no await yet)
   try{
     if(!_recAudioCtx||_recAudioCtx.state==='closed'){
@@ -2939,8 +3011,34 @@ let _posHistory = [];
 let _lastPos = null;
 let _lastPosCmp = null;
 const TRAJ_MS = 8000;
-const POS_THR = {hipShift:15, pelvicTilt:12, lKneeOff:12, rKneeOff:12};
+// 정면/후면 지표 임계값: degree 단위(shoulderTilt/hipTilt/trunkLean), % 단위(hipShift/knee)
+const POS_THR = {shoulderTilt:3, hipTilt:3, trunkLean:3, hipShift:15, lKneeOff:12, rKneeOff:12};
 const ST_COL_POS = {good:'#4CAF50', warn:'#FFC107', crit:'#F44336', unk:'#555'};
+const _deg1 = v => Math.round(v*10)/10; // 소수점 1자리 반올림
+
+// ── DeviceOrientation 센서 (정면/후면 수평 기준 보정) ──────────────────────
+function initOrientationSensor(){
+  if(_sensorReady) return; // 이미 활성화됨
+  function _onOrientation(e){
+    if(e.gamma == null) return;
+    // 지수 가중 평균으로 스무딩 (0.3 = 빠른 반응 / 0.1 = 느린 반응)
+    _deviceGamma = _deviceGamma * 0.7 + e.gamma * 0.3;
+    _sensorReady = true;
+  }
+  if(typeof DeviceOrientationEvent === 'undefined') return; // 미지원 환경
+  if(typeof DeviceOrientationEvent.requestPermission === 'function'){
+    // iOS 13+ : 반드시 사용자 제스처 컨텍스트(await 전)에서 호출해야 함
+    DeviceOrientationEvent.requestPermission()
+      .then(state => {
+        if(state === 'granted')
+          window.addEventListener('deviceorientation', _onOrientation, true);
+      })
+      .catch(e => console.warn('[Sensor] DeviceOrientation permission:', e));
+  } else {
+    // Android / 구형 iOS
+    window.addEventListener('deviceorientation', _onOrientation, true);
+  }
+}
 
 function extractPositions(kps){
   const ok = p => p && p.score >= CONF;
@@ -2949,28 +3047,61 @@ function extractPositions(kps){
   if(!ok(lHip)||!ok(rHip)) return null;
   const hipW = Math.abs(lHip.x - rHip.x);
   if(hipW < 0.04) return null;
-  const mHX = (lHip.x + rHip.x) / 2;
-  const mAX = (ok(lAnk)&&ok(rAnk)) ? (lAnk.x+rAnk.x)/2 : mHX;
-  const hipShift = Math.round(((mHX - mAX) / hipW) * 100);
-  const pelvicTilt = Math.round(((rHip.y - lHip.y) / hipW) * 100);
-  function kneeOff(hip, knee, ank){
-    if(!ok(hip)||!ok(knee)||!ok(ank)) return null;
-    const dy = hip.y - ank.y;
-    if(Math.abs(dy) < 0.02) return null;
-    const t = (knee.y - ank.y) / dy;
-    const expX = ank.x + t * (hip.x - ank.x);
-    return Math.round(((knee.x - expX) / hipW) * 100);
+  const R2D = 180/Math.PI;
+
+  // ── 수평 기준(baseline) 결정: 센서 → 발목선 → 화면 수평 순 우선 ──────
+  // gamma 부호 규칙: 폰을 우측으로 기울이면 gamma > 0
+  // 정면 카메라: 픽셀 x축이 해부학적 좌우와 반전되므로 부호 반전(-γ)
+  // 후면 카메라: 동일 방향이므로 부호 유지(+γ)
+  const hasAnk = ok(lAnk) && ok(rAnk);
+  let baseline = 0; // degrees — 이 값만큼 각 tilt 원시값에서 빼서 보정
+  if(_sensorReady){
+    const clampedGamma = Math.max(-45, Math.min(45, _deviceGamma));
+    // gamma → 화면 공간의 "수평선 기울기"로 변환
+    // 카메라를 우로 기울이면(gamma>0) 화면상 수평선은 우측이 올라감 → 양수 기울기
+    baseline = (S.dir === 'back' ? 1 : -1) * clampedGamma;
+  } else if(hasAnk){
+    // 발목-발목 연결선을 수평 기준으로 사용 (걸음폭 좁으면 오차 큼)
+    baseline = Math.atan2(rAnk.y - lAnk.y, Math.abs(rAnk.x - lAnk.x)) * R2D;
   }
-  const lKneeOff = kneeOff(lHip, lKnee, lAnk);
-  const rKneeOff = kneeOff(rHip, rKnee, rAnk);
-  const shoulderTilt = (ok(lSh)&&ok(rSh)) ? Math.round(((rSh.y-lSh.y)/hipW)*100) : null;
-  return {hipShift, pelvicTilt, lKneeOff, rKneeOff, shoulderTilt, hipW};
+  // else: baseline = 0 (화면 수평 기준, 카메라 틸트 미보정)
+
+  // ① 골반 기울기 (°): 좌→우 힙 연결선 기울기. 양수=우측 낮음
+  const hipTilt = _deg1(Math.atan2(rHip.y-lHip.y, Math.abs(rHip.x-lHip.x))*R2D - baseline);
+  // ② 어깨 기울기 (°): 양수=우측 어깨 낮음
+  const shoulderTilt = (ok(lSh)&&ok(rSh))
+    ? _deg1(Math.atan2(rSh.y-lSh.y, Math.abs(rSh.x-lSh.x))*R2D - baseline) : null;
+  // ③ 몸통 측방 기울기 (°): 골반 중점→어깨 중점 편차. 양수=우측 기울기
+  let trunkLean = null;
+  if(ok(lSh)&&ok(rSh)){
+    const mHipX=(lHip.x+rHip.x)/2, mHipY=(lHip.y+rHip.y)/2;
+    const mShX=(lSh.x+rSh.x)/2,   mShY=(lSh.y+rSh.y)/2;
+    const dy=mHipY-mShY;
+    // 몸통 기울기는 수직 기준이므로 수평 baseline을 음수로 보정
+    if(Math.abs(dy)>0.04) trunkLean=_deg1(Math.atan2(mShX-mHipX,dy)*R2D - (-baseline));
+  }
+  // ④ 골반 수평 이동 (% of hipW): 골반 중점 vs 발목 중점 편차. 양수=우측 이동
+  const mHX=(lHip.x+rHip.x)/2;
+  const mAX=hasAnk?(lAnk.x+rAnk.x)/2:mHX;
+  const hipShift=Math.round(((mHX-mAX)/hipW)*100);
+  // ⑤ 무릎 정렬 (% of hipW): 무릎이 힙-발목 직선 대비 편차. 양수=바깥
+  function kneeOff(hip,knee,ank){
+    if(!ok(hip)||!ok(knee)||!ok(ank)) return null;
+    const dy=hip.y-ank.y; if(Math.abs(dy)<0.02) return null;
+    const t=(knee.y-ank.y)/dy;
+    return Math.round(((knee.x-(ank.x+t*(hip.x-ank.x)))/hipW)*100);
+  }
+  const lKneeOff=kneeOff(lHip,lKnee,lAnk);
+  const rKneeOff=kneeOff(rHip,rKnee,rAnk);
+  // 센서 정보 포함해서 반환 (디버그 및 UI 표시용)
+  return {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff, hipW,
+          baseline, sensorUsed:_sensorReady};
 }
 
 function comparePos(pos, ref){
   if(!pos||!ref) return null;
   const r = {};
-  for(const k of ['hipShift','pelvicTilt','lKneeOff','rKneeOff']){
+  for(const k of ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff']){
     const cur=pos[k], rv=ref[k];
     if(cur==null||rv==null){r[k]={cur,dev:null,st:'unk'};continue;}
     const dev = cur-rv;
@@ -2981,14 +3112,18 @@ function comparePos(pos, ref){
 }
 
 function posAbsFeedback(pos){
-  // Fires when no position reference is saved; checks absolute alignment
+  // 기준 자세 없을 때 절대 임계값으로 교정 피드백 (degree 단위: tilt, % 단위: knee/shift)
   if(!pos) return null;
-  const ABS={hipShift:25,pelvicTilt:18,lKneeOff:22,rKneeOff:22};
+  const ABS={shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:25, lKneeOff:22, rKneeOff:22};
   const msgs=[];
+  if(pos.shoulderTilt!=null&&Math.abs(pos.shoulderTilt)>ABS.shoulderTilt)
+    msgs.push({text:pos.shoulderTilt>0?'오른쪽 어깨 올려':'왼쪽 어깨 올려',v:Math.abs(pos.shoulderTilt)});
+  if(pos.hipTilt!=null&&Math.abs(pos.hipTilt)>ABS.hipTilt)
+    msgs.push({text:pos.hipTilt>0?'오른 골반 올려':'왼 골반 올려',v:Math.abs(pos.hipTilt)});
+  if(pos.trunkLean!=null&&Math.abs(pos.trunkLean)>ABS.trunkLean)
+    msgs.push({text:pos.trunkLean>0?'상체 왼쪽으로 세워':'상체 오른쪽으로 세워',v:Math.abs(pos.trunkLean)});
   if(pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift)
     msgs.push({text:pos.hipShift>0?'골반 좀더 왼쪽으로':'골반 좀더 오른쪽으로',v:Math.abs(pos.hipShift)});
-  if(pos.pelvicTilt!=null&&Math.abs(pos.pelvicTilt)>ABS.pelvicTilt)
-    msgs.push({text:pos.pelvicTilt>0?'오른 골반 올려':'왼 골반 올려',v:Math.abs(pos.pelvicTilt)});
   if(pos.lKneeOff!=null&&Math.abs(pos.lKneeOff)>ABS.lKneeOff)
     msgs.push({text:pos.lKneeOff<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로',v:Math.abs(pos.lKneeOff)});
   if(pos.rKneeOff!=null&&Math.abs(pos.rKneeOff)>ABS.rKneeOff)
@@ -2998,20 +3133,24 @@ function posAbsFeedback(pos){
 }
 function posAllGood(cmp){
   if(!cmp) return false;
-  return ['hipShift','pelvicTilt','lKneeOff','rKneeOff'].every(k=>!cmp[k]||cmp[k].st==='good'||cmp[k].st==='unk');
+  return ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff']
+    .every(k=>!cmp[k]||cmp[k].st==='good'||cmp[k].st==='unk');
 }
 
 function posFeedbackStr(cmp){
   if(!cmp) return null;
   const xFlip = S.dir==='back' ? 1 : -1;
   const msgs = [];
-  const {hipShift, pelvicTilt, lKneeOff, rKneeOff} = cmp;
+  const {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff} = cmp;
+  if(shoulderTilt&&shoulderTilt.dev!=null&&shoulderTilt.st!=='good')
+    msgs.push({text: shoulderTilt.dev>0?'오른쪽 어깨 올려':'왼쪽 어깨 올려', st:shoulderTilt.st});
+  if(hipTilt&&hipTilt.dev!=null&&hipTilt.st!=='good')
+    msgs.push({text: hipTilt.dev>0?'오른 골반 올려':'왼 골반 올려', st:hipTilt.st});
+  if(trunkLean&&trunkLean.dev!=null&&trunkLean.st!=='good')
+    msgs.push({text: trunkLean.dev>0?'상체 왼쪽으로 세워':'상체 오른쪽으로 세워', st:trunkLean.st});
   if(hipShift&&hipShift.dev!=null&&hipShift.st!=='good'){
     const d = hipShift.dev * xFlip;
     msgs.push({text: d>0?'골반 좀더 왼쪽으로':'골반 좀더 오른쪽으로', st:hipShift.st});
-  }
-  if(pelvicTilt&&pelvicTilt.dev!=null&&pelvicTilt.st!=='good'){
-    msgs.push({text: pelvicTilt.dev>0?'오른 골반 올려':'왼 골반 올려', st:pelvicTilt.st});
   }
   if(lKneeOff&&lKneeOff.dev!=null&&lKneeOff.st!=='good'){
     const lat = lKneeOff.dev * (-xFlip);
@@ -3026,34 +3165,67 @@ function posFeedbackStr(cmp){
   return worst.text;
 }
 
+// 각도(°) 표기 헬퍼: 양수=우측, 음수=좌측
+function _fmtTilt(v, unit){
+  if(v==null) return '--';
+  const abs=Math.abs(v);
+  const side=v>0?'우↓':'좌↓';
+  return unit==='lean'?(v>0?'우 ':'좌 ')+abs+'°':`${side} ${abs}°`;
+}
+
 function updatePosBar(pos, cmp){
-  function setTrack(thumbId, refId, valId, val, refVal, range, metricKey){
-    const thumb=$(thumbId), refLine=$(refId), valEl=$(valId);
-    if(!thumb) return;
-    const v = val != null ? val : 0;
-    const pct = Math.max(2, Math.min(98, ((v + range) / (2*range)) * 100));
-    thumb.style.left = pct + '%';
-    const col = cmp&&cmp[metricKey] ? (ST_COL_POS[cmp[metricKey].st]||'#2196F3') : '#2196F3';
-    thumb.style.background = col;
-    if(valEl) valEl.textContent = val!=null ? (val>0?'+':'')+val : '--';
-    if(refLine){
-      if(refVal!=null){
-        const rp = Math.max(2,Math.min(98,((refVal+range)/(2*range))*100));
-        refLine.style.left = rp+'%'; refLine.style.display='block';
-      } else { refLine.style.display='none'; }
-    }
+  // ① 각도 지표 (어깨/골반/몸통 기울기)
+  function setDeg(dotId, valId, val, metricKey, type){
+    const dot=$(dotId), valEl=$(valId);
+    const st=cmp&&cmp[metricKey]?cmp[metricKey].st:'unk';
+    const col=ST_COL_POS[st]||'#555';
+    if(dot) dot.style.background=col;
+    if(valEl){valEl.textContent=val!=null?_fmtTilt(val,type):'--'; valEl.style.color=col==='#555'?'#fff':col;}
   }
-  const ref = _posRef[S.ex.id];
-  setTrack('pt-hip','pr-hip','pv-hip', pos?pos.hipShift:null, ref?ref.hipShift:null, 80, 'hipShift');
-  setTrack('pt-pel','pr-pel','pv-pel', pos?pos.pelvicTilt:null, ref?ref.pelvicTilt:null, 60, 'pelvicTilt');
+  setDeg('pd-sh','pv-sh', pos?pos.shoulderTilt:null, 'shoulderTilt','tilt');
+  setDeg('pd-hip','pv-hip', pos?pos.hipTilt:null, 'hipTilt','tilt');
+  setDeg('pd-trk','pv-trk', pos?pos.trunkLean:null, 'trunkLean','lean');
+
+  // ② 골반 위치 (슬라이더)
+  const thumb=$('pt-pos'), refLine=$('pr-pos'), valEl=$('pv-pos');
+  if(thumb){
+    const v=pos?pos.hipShift:0, range=80;
+    thumb.style.left=Math.max(2,Math.min(98,((v+range)/(2*range))*100))+'%';
+    const st=cmp&&cmp.hipShift?cmp.hipShift.st:'unk';
+    thumb.style.background=ST_COL_POS[st]||'#2196F3';
+  }
+  if(valEl) valEl.textContent=pos&&pos.hipShift!=null?(pos.hipShift>0?'+':'')+pos.hipShift:'--';
+  const ref=_posRef[S.ex.id];
+  if(refLine){
+    const rv=ref?ref.hipShift:null;
+    if(rv!=null){refLine.style.left=Math.max(2,Math.min(98,((rv+80)/160)*100))+'%';refLine.style.display='block';}
+    else refLine.style.display='none';
+  }
+
+  // ③ 무릎 정렬
   const lkEl=$('pv-lk'), rkEl=$('pv-rk');
   if(lkEl){
-    lkEl.textContent = (pos&&pos.lKneeOff!=null) ? (pos.lKneeOff>0?'+':'')+pos.lKneeOff : '--';
-    lkEl.style.color = cmp&&cmp.lKneeOff ? (ST_COL_POS[cmp.lKneeOff.st]||'#fff') : '#fff';
+    lkEl.textContent=(pos&&pos.lKneeOff!=null)?(pos.lKneeOff>0?'+':'')+pos.lKneeOff:'--';
+    lkEl.style.color=cmp&&cmp.lKneeOff?(ST_COL_POS[cmp.lKneeOff.st]||'#fff'):'#fff';
   }
   if(rkEl){
-    rkEl.textContent = (pos&&pos.rKneeOff!=null) ? (pos.rKneeOff>0?'+':'')+pos.rKneeOff : '--';
-    rkEl.style.color = cmp&&cmp.rKneeOff ? (ST_COL_POS[cmp.rKneeOff.st]||'#fff') : '#fff';
+    rkEl.textContent=(pos&&pos.rKneeOff!=null)?(pos.rKneeOff>0?'+':'')+pos.rKneeOff:'--';
+    rkEl.style.color=cmp&&cmp.rKneeOff?(ST_COL_POS[cmp.rKneeOff.st]||'#fff'):'#fff';
+  }
+  // ④ 센서 상태 표시
+  const sensorLbl=$('pm-sensor-lbl');
+  if(sensorLbl){
+    if(_sensorReady){
+      const g=Math.round(_deviceGamma*10)/10;
+      sensorLbl.textContent='수평기준: 자이로 (γ'+(g>=0?'+':'')+g+'°)';
+      sensorLbl.style.color='rgba(100,220,100,.6)';
+    } else if(pos&&pos.baseline!=null&&pos.baseline!==0){
+      sensorLbl.textContent='수평기준: 발목선';
+      sensorLbl.style.color='rgba(255,200,80,.5)';
+    } else {
+      sensorLbl.textContent='수평기준: 화면';
+      sensorLbl.style.color='rgba(255,255,255,.3)';
+    }
   }
 }
 
@@ -3416,42 +3588,4 @@ async function init(){
       if(!S.live&&!S.caps&&document.visibilityState==='visible'&&_srcMode==='camera'){
         const tracks=S.stream?S.stream.getVideoTracks():[];
         const muted=tracks.length>0&&tracks.every(t=>t.muted);
-        if(vid.paused||vid.readyState<2||muted) checkCameraHealth();
-      }
-    },3000);
-    $('cam-wrap').addEventListener('touchstart',fixIOSAudioRouting,{once:true});
-  }catch(e){
-    console.error('Camera:',e);
-
-    $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';
-  }
-
-  // Load AI pose detection model
-  $('mdl-txt').textContent=TX[CL].mdl_loading||'로딩 중';
-  try{
-    S.det=await poseDetection.createDetector(
-      poseDetection.SupportedModels.MoveNet,
-      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
-    );
-    if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
-    S.ready=true;
-    $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
-    $('btn-main').disabled=false;
-    $('init').classList.add('gone');
-    setTimeout(checkCameraHealth,400);
-  }catch(e){
-    console.error('Model:',e);
-    $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
-    $('init').classList.add('gone');
-    const rb=document.createElement('div');
-    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
-    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
-    document.body.appendChild(rb);
-  }
-  speechSynthesis.getVoices();
-}
-
-window.addEventListener('load',init);
-</script>
-</body>
-</html>
+        if(vid.paused||vid.readyState<2||muted) checkCameraHea

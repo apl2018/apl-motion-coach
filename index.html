@@ -1193,38 +1193,20 @@ function doFeedback(cmp,inZone){
 }
 // ── DETECTION LOOP ───────────────────────────────────────────────────────────
 let _lastDet=0,_detPending=false;
-let _detCanvas=null,_detCtx=null; // small canvas for faster MoveNet inference
-const DET_MAX=384; // max dim for detection canvas (MoveNet Lightning = 192×192 internally)
-const DET_MS=40;  // target ~25fps detection
+const DET_MS=40; // target ~25fps detection (MoveNet Lightning ~20-45ms per frame)
 async function _runDetection(){
   if(!S.live||!S.det) return;
   try{
     const isUser=_srcMode==='camera'&&S.facingMode==='user';
-    // ── Small-canvas optimization: reduce GPU upload from full HD → ~384px ──
-    // MoveNet Lightning always resizes to 192×192 internally, so full-HD input just wastes GPU upload time.
-    // By pre-shrinking to ≤384px we cut GL texture upload (the main thread blocker) by ~10-20x.
-    const vw=vid.videoWidth||vid.offsetWidth||480;
-    const vh=vid.videoHeight||vid.offsetHeight||640;
-    const sc=Math.min(DET_MAX/vw,DET_MAX/vh,1); // never upscale
-    const dw=Math.round(vw*sc),dh=Math.round(vh*sc);
-    if(!_detCanvas){_detCanvas=document.createElement('canvas');_detCtx=_detCanvas.getContext('2d',{alpha:false});}
-    if(_detCanvas.width!==dw||_detCanvas.height!==dh){_detCanvas.width=dw;_detCanvas.height=dh;}
-    if(isUser){
-      // Pre-flip so MoveNet can run with flipHorizontal:false (same result, keeps keypoint coords consistent)
-      _detCtx.save();_detCtx.scale(-1,1);_detCtx.drawImage(vid,-dw,0,dw,dh);_detCtx.restore();
-    }else{
-      _detCtx.drawImage(vid,0,0,dw,dh);
-    }
-    const poses=await S.det.estimatePoses(_detCanvas,{maxPoses:1,flipHorizontal:false});
-    // Scale keypoints back from detection-canvas space → video coordinate space
-    const invSc=sc>0?1/sc:1;
+    // Pass vid element directly — iOS Safari uses hardware-accelerated video texture path.
+    // (Canvas elements require CPU→GPU copy which is 3-5x slower on iOS, causing fps regression)
+    const poses=await S.det.estimatePoses(vid,{maxPoses:1,flipHorizontal:isUser});
     if(!poses||!poses.length){
       $('no-det').classList.add('on');$('chip').className='';
       _lastKps=null;_lastCmp=null;_lastAngles=null;
     }else{
       $('no-det').classList.remove('on');
-      // Rescale keypoints from detection-canvas coords → original video coords
-      const kps=poses[0].keypoints.map(kp=>({...kp,x:kp.x*invSc,y:kp.y*invSc}));
+      const kps=poses[0].keypoints;
       _prevKps=_lastKps;_prevKpsTs=_kpsTs;
       _lastKps=kps;_kpsTs=Date.now();
       if(isFrontal()){
@@ -2102,8 +2084,19 @@ function stopRecording(){
   }
   // audioStream 정리 (녹화 종료 후)
   if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;
-    // iOS: mic 종료 시 카메라 하드웨어가 일시 정지될 수 있음 → 재시작 보장
-    if(_srcMode==='camera'){setTimeout(()=>{if(!S.live&&!S.caps)checkCameraHealth();},1200);}
+    // iOS: mic 종료 시 카메라 트랙이 muted 되는 경우에만 재시작 (무조건 재시작하면 720p로 품질 저하)
+    if(_srcMode==='camera'&&S.stream){
+      const _vt=S.stream.getVideoTracks()[0];
+      if(_vt){
+        const _onMute=()=>{
+          _vt.removeEventListener('mute',_onMute);
+          setTimeout(()=>{if(!S.live&&!S.caps)checkCameraHealth();},400);
+        };
+        _vt.addEventListener('mute',_onMute);
+        // 2초 후 mute 이벤트가 없으면 listener 제거 (카메라 정상)
+        setTimeout(()=>_vt.removeEventListener('mute',_onMute),2000);
+      }
+    }
   }
   // Delay AudioContext close to 3s — gives recorder.onstop time to fire and encode audio
   setTimeout(()=>{

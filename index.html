@@ -3534,8 +3534,7 @@ async function init(){
       _clearSave();
     }
   });
-
-  $('i-msg').textContent='카메라 시작 중...';
+  // ── Camera initialization ───────────────────────────────────────────────────
   try{
     const stream=await navigator.mediaDevices.getUserMedia({
       video:{facingMode:{ideal:'environment'},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false});
@@ -3549,7 +3548,7 @@ async function init(){
     document.addEventListener('visibilitychange',()=>{
       if(document.visibilityState==='visible'){
         setAppHeight();
-        // ① S.live 여부와 관계없이: muted 트랙에 applyConstraints 시도 (분석 중 백그라운드 복귀)
+        // muted 트랙에 applyConstraints 시도 (분석 중 백그라운드 복귀)
         if(_srcMode==='camera'&&S.stream){
           const _tracks=S.stream.getVideoTracks();
           _tracks.forEach(t=>{if(t.muted) t.applyConstraints({}).catch(()=>{});});
@@ -3560,7 +3559,6 @@ async function init(){
           setTimeout(()=>{
             if(!S.live&&!S.caps){
               const tracks=S.stream?S.stream.getVideoTracks():[];
-              // muted=true: iOS froze camera hardware (shows still frame)
               const muted=tracks.length>0&&tracks.every(t=>t.muted);
               if(vid.paused||vid.readyState<2||muted)restartCamera();
             }
@@ -3583,9 +3581,44 @@ async function init(){
     });
     vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera') checkCameraHealth();});
     vid.addEventListener('ended',()=>{if(_srcMode==='camera') checkCameraHealth();});
-    // Periodic health check every 3s (lightweight — only acts if something is wrong)
+    // Periodic health check every 3s (lightweight)
     setInterval(()=>{
       if(!S.live&&!S.caps&&document.visibilityState==='visible'&&_srcMode==='camera'){
         const tracks=S.stream?S.stream.getVideoTracks():[];
         const muted=tracks.length>0&&tracks.every(t=>t.muted);
-        if(vid.paused||vid.readyState<2||muted) checkCameraHea
+        if(vid.paused||vid.readyState<2||muted) checkCameraHealth();
+      }
+    },3000);
+  }catch(e){
+    $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';
+  }
+
+  // ── AI 포즈 감지 모델 로드 ──────────────────────────────────────────────────
+  $('mdl-txt').textContent=TX[CL].mdl_loading||'로딩 중';
+  try{
+    S.det=await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
+    );
+    if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
+    S.ready=true;
+    $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
+    $('btn-main').disabled=false;
+    $('init').classList.add('gone');
+    setTimeout(checkCameraHealth,400);
+  }catch(e){
+    console.error('Model:',e);
+    $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
+    $('init').classList.add('gone');
+    const rb=document.createElement('div');
+    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
+    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
+    document.body.appendChild(rb);
+  }
+  speechSynthesis.getVoices();
+}
+
+window.addEventListener('load',init);
+</script>
+</body>
+</html>

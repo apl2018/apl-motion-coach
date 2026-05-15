@@ -1193,18 +1193,38 @@ function doFeedback(cmp,inZone){
 }
 // ── DETECTION LOOP ───────────────────────────────────────────────────────────
 let _lastDet=0,_detPending=false;
-const DET_MS=40; // target ~25fps detection (MoveNet latency ~20-40ms)
+let _detCanvas=null,_detCtx=null; // small canvas for faster MoveNet inference
+const DET_MAX=384; // max dim for detection canvas (MoveNet Lightning = 192×192 internally)
+const DET_MS=40;  // target ~25fps detection
 async function _runDetection(){
   if(!S.live||!S.det) return;
   try{
     const isUser=_srcMode==='camera'&&S.facingMode==='user';
-    const poses=await S.det.estimatePoses(vid,{maxPoses:1,flipHorizontal:isUser});
+    // ── Small-canvas optimization: reduce GPU upload from full HD → ~384px ──
+    // MoveNet Lightning always resizes to 192×192 internally, so full-HD input just wastes GPU upload time.
+    // By pre-shrinking to ≤384px we cut GL texture upload (the main thread blocker) by ~10-20x.
+    const vw=vid.videoWidth||vid.offsetWidth||480;
+    const vh=vid.videoHeight||vid.offsetHeight||640;
+    const sc=Math.min(DET_MAX/vw,DET_MAX/vh,1); // never upscale
+    const dw=Math.round(vw*sc),dh=Math.round(vh*sc);
+    if(!_detCanvas){_detCanvas=document.createElement('canvas');_detCtx=_detCanvas.getContext('2d',{alpha:false});}
+    if(_detCanvas.width!==dw||_detCanvas.height!==dh){_detCanvas.width=dw;_detCanvas.height=dh;}
+    if(isUser){
+      // Pre-flip so MoveNet can run with flipHorizontal:false (same result, keeps keypoint coords consistent)
+      _detCtx.save();_detCtx.scale(-1,1);_detCtx.drawImage(vid,-dw,0,dw,dh);_detCtx.restore();
+    }else{
+      _detCtx.drawImage(vid,0,0,dw,dh);
+    }
+    const poses=await S.det.estimatePoses(_detCanvas,{maxPoses:1,flipHorizontal:false});
+    // Scale keypoints back from detection-canvas space → video coordinate space
+    const invSc=sc>0?1/sc:1;
     if(!poses||!poses.length){
       $('no-det').classList.add('on');$('chip').className='';
       _lastKps=null;_lastCmp=null;_lastAngles=null;
     }else{
       $('no-det').classList.remove('on');
-      const kps=poses[0].keypoints;
+      // Rescale keypoints from detection-canvas coords → original video coords
+      const kps=poses[0].keypoints.map(kp=>({...kp,x:kp.x*invSc,y:kp.y*invSc}));
       _prevKps=_lastKps;_prevKpsTs=_kpsTs;
       _lastKps=kps;_kpsTs=Date.now();
       if(isFrontal()){
@@ -2506,10 +2526,16 @@ async function startLive(){
   // ② TTS 사전 활성화 — 제스처 컨텍스트 내(await 전)에서 호출해야 iOS에서 동작
   try{const _w=new SpeechSynthesisUtterance('');speechSynthesis.speak(_w);speechSynthesis.cancel();}catch(e){}
 
-  // ③ 마이크 요청 — await 없이 .then()으로 비동기 (TTS 사전활성화 후 요청해야 iOS에서 라우팅 간섭 없음)
+  // ③ 마이크 요청 — TTS 사전활성화 후 요청해야 iOS에서 라우팅 간섭 없음
   //    echoCancellation:false → 스피커로 나오는 TTS 피드백 음성을 마이크가 억제하지 않고 캡처
+  //    기존 audioStream의 트랙이 iOS 백그라운드로 ended 상태가 됐으면 재요청
+  if(S.audioStream){
+    const endedTracks=S.audioStream.getTracks().filter(t=>t.readyState==='ended');
+    if(endedTracks.length>0){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;}
+  }
+  let _micPromise=null;
   if(!S.audioStream){
-    navigator.mediaDevices.getUserMedia({
+    _micPromise=navigator.mediaDevices.getUserMedia({
       audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1},
       video:false
     }).then(s=>{S.audioStream=s;}).catch(e=>console.warn('Mic denied:',e));
@@ -2535,6 +2561,24 @@ async function startLive(){
     }
     cdown.classList.remove('on');cnum.style.color='#fff';
   }
+  // ④ 카운트다운 후 마이크 준비 대기 — 최대 2초 추가 대기 (파일모드 700ms 카운트다운 보완)
+  //    S.audioStream이 아직 null이면 _micPromise가 resolve될 때까지 기다림
+  if(_micPromise&&!S.audioStream){
+    await Promise.race([_micPromise,sleep(2000)]);
+  }
+  // 마이크 재확인: 여전히 없으면 한 번 더 시도 (첫 실행 or 백그라운드 복귀 후)
+  if(!S.audioStream){
+    try{
+      S.audioStream=await Promise.race([
+        navigator.mediaDevices.getUserMedia({
+          audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1},
+          video:false
+        }),
+        sleep(1500).then(()=>null)
+      ]);
+    }catch(e){console.warn('Mic retry failed:',e);}
+  }
+
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
   resetRepOsc();
   $('rep-num').textContent='0';
@@ -3326,6 +3370,11 @@ async function init(){
     document.addEventListener('visibilitychange',()=>{
       if(document.visibilityState==='visible'){
         setAppHeight();
+        // ① S.live 여부와 관계없이: muted 트랙에 applyConstraints 시도 (분석 중 백그라운드 복귀)
+        if(_srcMode==='camera'&&S.stream){
+          const _tracks=S.stream.getVideoTracks();
+          _tracks.forEach(t=>{if(t.muted) t.applyConstraints({}).catch(()=>{});});
+        }
         if(_srcMode==='camera'&&!S.live&&!S.caps){
           // First attempt at 800ms; second at 2s; third at 4s
           setTimeout(restartCamera,800);

@@ -750,9 +750,9 @@ ko:{flag:'🇰🇷',label:'KO',voice_lang:'ko-KR',
   PRAISE:['완벽해!','아주 좋아!','훌륭해!','자세 좋아!'],
   FB:{
     knee_str:{warn:'무릎 더 구부려.',crit:'무릎 90도로 더 구부려.'},
-    knee_bnt:{warn:'무릎 더 펴.',crit:'무릎 너무 굽혔어. 펴.'},
+    knee_bnt:{warn:'무릎 너무 구부렸어.',crit:'무릎 너무 굽혔어. 펴.'},
     hip_up:{warn:'엉덩이 더 낮춰.',crit:'엉덩이 더 내려.'},
-    hip_fwd:{warn:'상체 더 세워.',crit:'골반 앞으로 기울었어. 세워.'},
+    hip_fwd:{warn:'상체 더 세워.',crit:'상체 너무 숙였어.'},
     trunk_fwd:{warn:'상체 더 세워.',crit:'등 너무 굽었어. 세워.'},
     trunk_up:{warn:'상체 앞으로 기울여.',crit:'상체 더 기울여.'},
     spine_flx:{warn:'등 더 펴.',crit:'등 굽었어. 펴.'},
@@ -1879,12 +1879,11 @@ async function startRecording(){
   // Local closure — isolated from next session's S.recChunks=[] reset
   const _sessionChunks=[];
   S.recChunks=_sessionChunks;
-  // Composite canvas: max 1280px on longest side → smaller file, higher fps
-  // (원본 해상도 그대로 시 1320×2868=380만 픽셀 → 드로잉 느림)
+  // Composite canvas: max 1920px on longest side → 1080p recording quality
   {
-    const _REC_MAX=1280;
-    var _rawW=vid.videoWidth||$('cam-wrap').offsetWidth||720;
-    var _rawH=vid.videoHeight||$('cam-wrap').offsetHeight||960;
+    const _REC_MAX=1920;
+    var _rawW=vid.videoWidth||$('cam-wrap').offsetWidth||1080;
+    var _rawH=vid.videoHeight||$('cam-wrap').offsetHeight||1920;
     var _s=Math.max(_rawW,_rawH)>_REC_MAX?_REC_MAX/Math.max(_rawW,_rawH):1;
     var cw=Math.round(_rawW*_s), ch=Math.round(_rawH*_s);
   }
@@ -2200,7 +2199,7 @@ async function patchMP4Timestamps(blob,wallMs){
           const tv2=u8[tfdt.dp];
           let orig=tv2===1?(u32(tfdt.dp+4)*4294967296+u32(tfdt.dp+8)):u32(tfdt.dp+4);
           const expected=trackNext[tid];
-          if(Math.abs(orig-expected)>ts*5){
+          if(Math.abs(orig-expected)>Math.round(ts/2)){
             if(tv2===1){dst.setUint32(tfdt.dp+4,Math.floor(expected/4294967296));dst.setUint32(tfdt.dp+8,expected>>>0);}
             else dst.setUint32(tfdt.dp+4,expected>>>0);
             anyFixed=true;
@@ -2793,8 +2792,8 @@ async function restartCamera(){
     let stream=null;
     const camTries=[
       {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false},
-      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1280},height:{ideal:720}},audio:false},
-      {video:{facingMode:S.facingMode},audio:false},
+      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920},height:{ideal:1080}},audio:false},
+      {video:{facingMode:{ideal:S.facingMode}},audio:false},
       {video:true,audio:false}
     ];
     for(const c of camTries){
@@ -3144,7 +3143,7 @@ async function _forceCameraRestart(){
     let newStream=null;
     const tries=[
       {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false},
-      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}},audio:false},
+      {video:{facingMode:{ideal:S.facingMode},width:{ideal:1920},height:{ideal:1080}},audio:false},
       {video:{facingMode:S.facingMode},audio:false},
       {video:true,audio:false},
     ];
@@ -3309,6 +3308,7 @@ async function init(){
   });
   $('btn-sum-save').addEventListener('click',()=>{
     if(!_pendingSaveBlob) return;
+    if(!S.premium){requirePremium(()=>{if(_pendingSaveBlob)$('btn-sum-save').click();});return;}
     const blob=_pendingSaveBlob, fname=_pendingSaveName;
     const file=new File([blob],fname,{type:blob.type,lastModified:Date.now()});
     const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);

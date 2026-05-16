@@ -2932,15 +2932,17 @@ function showSummary(elapsed){
     const posKeys=['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff'];
     const posLbls={shoulderTilt:'어깨기울기',hipTilt:'골반기울기',trunkLean:'몸통기울기',hipShift:'골반위치',lKneeOff:'무릎 L',rKneeOff:'무릎 R'};
     const posUnit={shoulderTilt:'°',hipTilt:'°',trunkLean:'°',hipShift:'%',lKneeOff:'%',rKneeOff:'%'};
-    // 점수: 전체 측정 프레임 중 good 비율
+    // 선택된 관절만 포함 (POS_JOINT_MAP 기준)
+    const selPosKeys=posKeys.filter(k=>S.jointSel[POS_JOINT_MAP[k]]!==false);
+    // 점수: 선택된 지표의 good 비율
     let totalG=0,totalAll=0;
-    for(const k of posKeys){const m=PM[k];totalG+=m.g;totalAll+=m.g+m.w+m.c;}
+    for(const k of selPosKeys){const m=PM[k];totalG+=m.g;totalAll+=m.g+m.w+m.c;}
     const pct=totalAll>0?Math.round(totalG/totalAll*100):0;
     scoreEl.textContent=pct+'점';
     scoreEl.className='sum-score-num '+(pct>=80?'good':pct>=50?'warn':'crit');
     $('sum-score-lbl').innerHTML='자세 안정성<br><span style="font-size:11px">총 '+st.totalFrames+'프레임 분석</span>';
     $('sum-joints-lbl').textContent='항목별 자세 분석';
-    for(const k of posKeys){
+    for(const k of selPosKeys){
       const pm=PM[k];if(pm.cnt===0) continue;
       const tot=pm.g+pm.w+pm.c||1;
       const gp=Math.round(pm.g/tot*100),wp=Math.round(pm.w/tot*100),cp=100-gp-wp;
@@ -2967,7 +2969,7 @@ function showSummary(elapsed){
   } else {
     // ── 측면 결과: 관절 각도 기반 (기존 로직) ────────────────────────────
     let totalG=0,totalAll=0;
-    const selKeys=['knee','hip','trunk','spine'].filter(k=>S.jointSel[k]);
+    const selKeys=['knee','hip','trunk','spine','shoulder','elbow'].filter(k=>S.jointSel[k]);
     for(const k of selKeys){
       const j=st.joints[k];totalG+=j.g;totalAll+=j.g+j.w+j.c;
     }
@@ -3268,6 +3270,10 @@ const TRAJ_MS = 8000;
 // 정면/후면 지표 임계값: degree 단위(shoulderTilt/hipTilt/trunkLean), % 단위(hipShift/knee)
 const POS_THR = {shoulderTilt:3, hipTilt:3, trunkLean:3, hipShift:15, lKneeOff:12, rKneeOff:12};
 const ST_COL_POS = {good:'#4CAF50', warn:'#FFC107', crit:'#F44336', unk:'#555'};
+// 정면 지표 → 관절 선택(S.jointSel) 키 매핑
+const POS_JOINT_MAP = {shoulderTilt:'shoulder', hipTilt:'hip', trunkLean:'trunk', hipShift:'hip', lKneeOff:'knee', rKneeOff:'knee'};
+// 영상 저장 보류 blob (saveRecording에서 세팅, shareRecording에서 소비)
+let _pendingSaveBlob=null, _pendingSaveName='';
 const _deg1 = v => Math.round(v*10)/10; // 소수점 1자리 반올림
 
 // ── DeviceOrientation 센서 (정면/후면 수평 기준 보정) ──────────────────────
@@ -3369,18 +3375,19 @@ function posAbsFeedback(pos){
   // 기준 자세 없을 때 절대 임계값으로 교정 피드백 (degree 단위: tilt, % 단위: knee/shift)
   if(!pos) return null;
   const ABS={shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:25, lKneeOff:22, rKneeOff:22};
+  const sel=k=>S.jointSel[POS_JOINT_MAP[k]!==undefined?POS_JOINT_MAP[k]:k]!==false;
   const msgs=[];
-  if(pos.shoulderTilt!=null&&Math.abs(pos.shoulderTilt)>ABS.shoulderTilt)
+  if(sel('shoulderTilt')&&pos.shoulderTilt!=null&&Math.abs(pos.shoulderTilt)>ABS.shoulderTilt)
     msgs.push({text:pos.shoulderTilt>0?'오른쪽 어깨 올려':'왼쪽 어깨 올려',v:Math.abs(pos.shoulderTilt)});
-  if(pos.hipTilt!=null&&Math.abs(pos.hipTilt)>ABS.hipTilt)
+  if(sel('hipTilt')&&pos.hipTilt!=null&&Math.abs(pos.hipTilt)>ABS.hipTilt)
     msgs.push({text:pos.hipTilt>0?'오른 골반 올려':'왼 골반 올려',v:Math.abs(pos.hipTilt)});
-  if(pos.trunkLean!=null&&Math.abs(pos.trunkLean)>ABS.trunkLean)
+  if(sel('trunkLean')&&pos.trunkLean!=null&&Math.abs(pos.trunkLean)>ABS.trunkLean)
     msgs.push({text:pos.trunkLean>0?'상체 왼쪽으로 세워':'상체 오른쪽으로 세워',v:Math.abs(pos.trunkLean)});
-  if(pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift)
+  if(sel('hipShift')&&pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift)
     msgs.push({text:pos.hipShift>0?'골반 좀더 왼쪽으로':'골반 좀더 오른쪽으로',v:Math.abs(pos.hipShift)});
-  if(pos.lKneeOff!=null&&Math.abs(pos.lKneeOff)>ABS.lKneeOff)
+  if(sel('lKneeOff')&&pos.lKneeOff!=null&&Math.abs(pos.lKneeOff)>ABS.lKneeOff)
     msgs.push({text:pos.lKneeOff<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로',v:Math.abs(pos.lKneeOff)});
-  if(pos.rKneeOff!=null&&Math.abs(pos.rKneeOff)>ABS.rKneeOff)
+  if(sel('rKneeOff')&&pos.rKneeOff!=null&&Math.abs(pos.rKneeOff)>ABS.rKneeOff)
     msgs.push({text:pos.rKneeOff>0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로',v:Math.abs(pos.rKneeOff)});
   if(!msgs.length) return null;
   return msgs.sort((a,b)=>b.v-a.v)[0].text;
@@ -3388,29 +3395,31 @@ function posAbsFeedback(pos){
 function posAllGood(cmp){
   if(!cmp) return false;
   return ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff']
+    .filter(k=>S.jointSel[POS_JOINT_MAP[k]]!==false)
     .every(k=>!cmp[k]||cmp[k].st==='good'||cmp[k].st==='unk');
 }
 
 function posFeedbackStr(cmp){
   if(!cmp) return null;
   const xFlip = S.dir==='back' ? 1 : -1;
+  const sel = k => S.jointSel[POS_JOINT_MAP[k]]!==false;
   const msgs = [];
   const {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff} = cmp;
-  if(shoulderTilt&&shoulderTilt.dev!=null&&shoulderTilt.st!=='good')
+  if(sel('shoulderTilt')&&shoulderTilt&&shoulderTilt.dev!=null&&shoulderTilt.st!=='good')
     msgs.push({text: shoulderTilt.dev>0?'오른쪽 어깨 올려':'왼쪽 어깨 올려', st:shoulderTilt.st});
-  if(hipTilt&&hipTilt.dev!=null&&hipTilt.st!=='good')
+  if(sel('hipTilt')&&hipTilt&&hipTilt.dev!=null&&hipTilt.st!=='good')
     msgs.push({text: hipTilt.dev>0?'오른 골반 올려':'왼 골반 올려', st:hipTilt.st});
-  if(trunkLean&&trunkLean.dev!=null&&trunkLean.st!=='good')
+  if(sel('trunkLean')&&trunkLean&&trunkLean.dev!=null&&trunkLean.st!=='good')
     msgs.push({text: trunkLean.dev>0?'상체 왼쪽으로 세워':'상체 오른쪽으로 세워', st:trunkLean.st});
-  if(hipShift&&hipShift.dev!=null&&hipShift.st!=='good'){
+  if(sel('hipShift')&&hipShift&&hipShift.dev!=null&&hipShift.st!=='good'){
     const d = hipShift.dev * xFlip;
     msgs.push({text: d>0?'골반 좀더 왼쪽으로':'골반 좀더 오른쪽으로', st:hipShift.st});
   }
-  if(lKneeOff&&lKneeOff.dev!=null&&lKneeOff.st!=='good'){
+  if(sel('lKneeOff')&&lKneeOff&&lKneeOff.dev!=null&&lKneeOff.st!=='good'){
     const lat = lKneeOff.dev * (-xFlip);
     msgs.push({text: lat<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로', st:lKneeOff.st});
   }
-  if(rKneeOff&&rKneeOff.dev!=null&&rKneeOff.st!=='good'){
+  if(sel('rKneeOff')&&rKneeOff&&rKneeOff.dev!=null&&rKneeOff.st!=='good'){
     const lat = rKneeOff.dev * xFlip;
     msgs.push({text: lat<0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로', st:rKneeOff.st});
   }
@@ -3717,16 +3726,7 @@ async function init(){
   // Source mode (camera / file)
   $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));
   $('src-file-btn').addEventListener('click',()=>switchSrcMode('file'));
-  $('ana-file-input').addEventListener('change',e=>{
-    const file=e.target.files[0];if(!file) return;
-    if(_anaFileURL){URL.revokeObjectURL(_anaFileURL);_anaFileURL=null;}
-    _anaFileURL=URL.createObjectURL(file);
-    $('ana-file-label').textContent=file.name;
-    vid.srcObject=null;vid.style.transform='';cvs.style.transform='';
-    vid.src=_anaFileURL;
-    vid.load();vid.play().catch(()=>{});
-    $('btn-main').disabled=!S.ready;
-  });
+  $('ana-file-input').addEventListener('change',onAnaFileSelected);
   const _shareBtn=$('btn-share');if(_shareBtn)_shareBtn.addEventListener('click',shareRecording);
   const _saveBtn=$('btn-sum-save');
   if(_saveBtn) _saveBtn.addEventListener('click',()=>{requirePremium(()=>{shareRecording(true);});});
@@ -3786,9 +3786,10 @@ async function init(){
     rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
     document.body.appendChild(rb);
   }
+  try{if(localStorage.getItem('apl_premium')==='1')_setPremium(true);}catch(e){}
   speechSynthesis.getVoices();
+  applyLang();
 }
-
 window.addEventListener('load',init);
 </script>
 </body>

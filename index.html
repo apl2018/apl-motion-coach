@@ -2933,10 +2933,14 @@ function stopLive(){
 function showSummary(elapsed){
   const st=S.stats;if(!st||st.totalFrames<5) return;
   const L=TX[CL];
-  // 저장 버튼: 이전 blob 초기화 → saveRecording이 완료되면 다시 표시됨
-  _pendingSaveBlob=null;_pendingSaveName='';
+  // 저장 버튼 초기 숨김 — blob이 이미 준비된 경우 즉시 표시, 아니면 saveRecording 완료 후 표시
   const _sb=$('btn-sum-save');
-  if(_sb){_sb.style.display='none';_sb.textContent='📥 영상 저장';_sb.style.background='';_sb.style.pointerEvents='';}
+  if(_sb){_sb.textContent='📥 영상 저장';_sb.style.background='';_sb.style.pointerEvents='';}
+  if(_pendingSaveBlob){
+    if(_sb)_sb.style.display='block'; // 이미 blob 준비됨 → 즉시 표시
+  }else{
+    if(_sb)_sb.style.display='none'; // 아직 blob 없음 → saveRecording이 완료되면 표시
+  }
   const m=String(Math.floor(elapsed/60)).padStart(2,'0');
   const s=String(elapsed%60).padStart(2,'0');
   const exName=S.ex.name;

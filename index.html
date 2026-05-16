@@ -223,9 +223,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #btn-ref-stop:active{opacity:.6}
 #btn-ref-file{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--txt2);font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
 #btn-ref-file:active{opacity:.6}
-#btn-gate{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--txt2);font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
-#btn-gate.set{border-color:rgba(255,165,0,.7);color:#FFA500}
-#btn-gate:active{opacity:.6}
+#gate-status{font-size:11px;color:var(--txt3);margin-top:4px;min-height:16px;transition:color .2s}
+#gate-status.set{color:#FFA500}
 #src-row{display:flex;gap:8px;margin-top:4px}
 .srctgl{flex:1;padding:7px 4px;border-radius:10px;border:1px solid var(--border);color:var(--txt2);text-align:center;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s;user-select:none;-webkit-user-select:none}
 .srctgl.on{background:var(--red);color:#fff;border-color:transparent}
@@ -630,8 +629,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         <button id="btn-ref-start">● 기준 시작</button>
         <button id="btn-ref-stop">■ 기준 종료</button>
         <button id="btn-ref-file">📁 파일</button>
-        <button id="btn-gate" title="기준 자세에 진입하기 직전 자세(예: 백스윙 탑)를 저장하면, 그 방향으로 지나갈 때만 피드백합니다">⬟ 게이트</button>
       </div>
+      <div id="gate-status"></div>
     </div>
     <div id="fb-txt"></div>
   </div>
@@ -711,8 +710,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     </div>
     <div id="fp-save-row">
       <button id="fp-photo" disabled>📷 사진</button>
-      <button id="fp-gate-save" disabled title="이 프레임을 게이트 시작 자세로 저장 — 이 자세를 통과한 뒤에만 기준 자세 피드백이 발동됩니다">⬟ 시작</button>
-      <button id="fp-save" disabled>✓ 저장</button>
+      <button id="fp-gate-save" disabled title="이 프레임을 시작 자세로 저장 — 이 자세를 지나간 뒤 끝(기준자세)을 통과할 때 피드백이 발동됩니다">▷ 시작</button>
+      <button id="fp-save" disabled title="이 프레임을 끝(기준자세)으로 저장 — 시작 자세 이후 이 자세를 지날 때 피드백합니다">✓ 끝(기준자세)</button>
     </div>
   </div>
 </div>
@@ -1485,7 +1484,7 @@ function _setupFramePicker(url){
   const _gateBtn=$('fp-gate-save');
   if(_gateBtn){
     const _gset=!!_gateEntryRef[S.ex.id];
-    _gateBtn.textContent=_gset?'⬟ 시작 ✓':'⬟ 시작';
+    _gateBtn.textContent=_gset?'▷ 시작 ✓':'▷ 시작';
     _gset?_gateBtn.classList.add('set'):_gateBtn.classList.remove('set');
   }
   _fpPoses=null;
@@ -1628,13 +1627,25 @@ async function saveGateFrame(){
   const id=S.ex.id;
   _gateEntryRef[id]={...angles};
   try{localStorage.setItem('apl_gate_'+id,JSON.stringify(_gateEntryRef[id]));}catch(e){}
-  // 버튼에 설정됨 표시
+  // 버튼에 설정됨 표시 — ✓ 영구 유지
   const btn=$('fp-gate-save');
-  if(btn){btn.textContent='⬟ 시작 ✓';btn.classList.add('set');}
+  if(btn){btn.textContent='▷ 시작 ✓';btn.classList.add('set');}
   updateGateUI();
-  // 잠시 후 원래 텍스트로 복귀
-  await sleep(1200);
-  if(btn){btn.textContent='⬟ 시작';} // set 스타일은 유지
+  // 토스트 알림
+  _showFpToast(CL==='ko'?'▷ 시작 프레임 저장됨 — 게이트 활성 ✓':CL==='ja'?'開始フレーム保存 — ゲート有効 ✓':CL==='zh'?'起始帧已保存 — 关卡已启用 ✓':'Start frame saved — Gate active ✓');
+}
+function _showFpToast(msg){
+  let t=document.getElementById('_fp_toast');
+  if(!t){
+    t=document.createElement('div');
+    t.id='_fp_toast';
+    t.style.cssText='position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#27AE60;color:#fff;padding:10px 22px;border-radius:20px;font-size:14px;font-weight:700;z-index:9999;pointer-events:none;transition:opacity .4s';
+    document.body.appendChild(t);
+  }
+  t.textContent=msg;
+  t.style.opacity='1';
+  clearTimeout(t._tid);
+  t._tid=setTimeout(()=>{t.style.opacity='0';},2000);
 }
 
 // ── 기준자세 로그 저장 ──────────────────────────────────────────────────────
@@ -3087,13 +3098,15 @@ function showSummary(elapsed){
 
 // ── UI HELPERS ────────────────────────────────────────────────────────────────
 function updateGateUI(){
-  const btn=$('btn-gate');if(!btn) return;
+  const el=$('gate-status');if(!el) return;
   const set=!!_gateEntryRef[S.ex.id];
-  btn.classList.toggle('set',set);
-  btn.textContent=set?'⬟ 게이트 ✓':'⬟ 게이트';
-  btn.title=set
-    ?'게이트 진입 자세 설정됨 — 탭하면 해제합니다\n(기준 자세 방향으로 지나갈 때만 피드백)'
-    :'기준 자세에 진입하기 직전 자세(예: 백스윙 탑)를 카메라에 비추고 탭하세요';
+  if(set){
+    el.textContent='▷ 시작 프레임 설정됨 — 게이트 자동 활성';
+    el.classList.add('set');
+  } else {
+    el.textContent='';
+    el.classList.remove('set');
+  }
 }
 function updateRefUI(){
   const L=TX[CL],r=S.refs[S.ex.id];
@@ -3752,23 +3765,7 @@ async function init(){
   $('btn-ref-start').addEventListener('click',startRefRecording);
   $('btn-ref-stop').addEventListener('click',stopRefRecording);
   $('btn-ref-file').addEventListener('click',openRefFileUpload);
-  $('btn-gate').addEventListener('click',()=>{
-    if(S.live||S.caps) return;
-    const id=S.ex.id;
-    if(_gateEntryRef[id]){
-      delete _gateEntryRef[id];
-      try{localStorage.removeItem('apl_gate_'+id);}catch(e){}
-    } else {
-      if(!_lastAngles){
-        $('fb-txt').textContent='자세를 먼저 카메라에 비춰주세요';
-        setTimeout(()=>{$('fb-txt').textContent='';},2500);
-        return;
-      }
-      _gateEntryRef[id]={..._lastAngles};
-      try{localStorage.setItem('apl_gate_'+id,JSON.stringify(_gateEntryRef[id]));}catch(e){}
-    }
-    updateGateUI();
-  });
+  // btn-gate 제거됨 — 시작 프레임은 프레임 피커에서만 설정
   $('ref-file-input').addEventListener('change',onRefFileSelected);
   $('fp-close').addEventListener('click',closeFramePicker);
   $('fp-save').addEventListener('click',saveRefFrame);

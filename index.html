@@ -411,11 +411,16 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #fp-athlete:focus{border-color:var(--green)}
 #fp-athlete.required{border-color:#E53935;animation:shake .3s}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
-#fp-save-row{display:flex;gap:8px;}
+#fp-save-row{display:flex;gap:8px;flex-wrap:wrap;}
 #fp-photo{padding:13px 16px;border-radius:12px;border:1px solid rgba(255,255,255,.25);
   background:transparent;color:var(--txt2);font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}
 #fp-photo:disabled{opacity:.3;cursor:not-allowed}
 #fp-photo:active:not(:disabled){opacity:.7}
+#fp-gate-save{padding:13px 14px;border-radius:12px;border:1px solid rgba(255,165,0,.45);
+  background:rgba(255,165,0,.12);color:#FFA500;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}
+#fp-gate-save:disabled{opacity:.3;cursor:not-allowed}
+#fp-gate-save.set{background:rgba(255,165,0,.3);border-color:#FFA500}
+#fp-gate-save:active:not(:disabled){opacity:.7}
 #fp-save{flex:1;padding:13px;border-radius:12px;border:none;
   background:var(--green);color:#fff;font-size:14px;font-weight:700;cursor:pointer}
 #fp-save:disabled{background:rgba(255,255,255,.1);color:var(--txt3);cursor:not-allowed}
@@ -706,6 +711,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     </div>
     <div id="fp-save-row">
       <button id="fp-photo" disabled>📷 사진</button>
+      <button id="fp-gate-save" disabled title="이 프레임을 게이트 시작 자세로 저장 — 이 자세를 통과한 뒤에만 기준 자세 피드백이 발동됩니다">⬟ 시작</button>
       <button id="fp-save" disabled>✓ 저장</button>
     </div>
   </div>
@@ -1455,6 +1461,14 @@ function _setupFramePicker(url){
   $('fp-chip').className='';
   $('fp-save').disabled=true;
   $('fp-photo').disabled=true;
+  $('fp-gate-save').disabled=true;
+  // 게이트 버튼 상태 반영 (이미 설정된 경우 표시)
+  const _gateBtn=$('fp-gate-save');
+  if(_gateBtn){
+    const _gset=!!_gateEntryRef[S.ex.id];
+    _gateBtn.textContent=_gset?'⬟ 시작 ✓':'⬟ 시작';
+    _gset?_gateBtn.classList.add('set'):_gateBtn.classList.remove('set');
+  }
   _fpPoses=null;
   // 피커 열릴 때 입력란 초기화
   $('fp-athlete').value='';
@@ -1492,10 +1506,12 @@ async function _detectFpPose(){
       $('fp-chip').textContent=TX[CL].fp_pose_ok;$('fp-chip').className='ok';
       $('fp-save').disabled=false;
       $('fp-photo').disabled=false;
+      $('fp-gate-save').disabled=false;
       _drawFpSkel(_fpPoses.keypoints,fpc,fctx);
     }else{
       $('fp-chip').textContent=TX[CL].fp_pose_bad;$('fp-chip').className='bad';
       $('fp-save').disabled=true;
+      $('fp-gate-save').disabled=true;
       $('fp-photo').disabled=true;
     }
   }catch(e){console.warn('fp detect:',e);}
@@ -1581,6 +1597,27 @@ async function saveRefFrame(){
   closeFramePicker();updateRefUI();updateExChips();
   $('btn-main').disabled=false;
 }
+// ── 시작 프레임(게이트) 저장 ─────────────────────────────────────────────────
+// 프레임 피커에서 선택한 프레임을 게이트 진입 자세로 저장
+async function saveGateFrame(){
+  if(!S.premium){requirePremium(saveGateFrame);return;}
+  if(!_fpPoses){await _detectFpPose();}
+  if(!_fpPoses){return;}
+  const kps=_fpPoses.keypoints;
+  const angles=extractAngles(kps);
+  if(angles.knee===null&&angles.hip===null){return;}
+  const id=S.ex.id;
+  _gateEntryRef[id]={...angles};
+  try{localStorage.setItem('apl_gate_'+id,JSON.stringify(_gateEntryRef[id]));}catch(e){}
+  // 버튼에 설정됨 표시
+  const btn=$('fp-gate-save');
+  if(btn){btn.textContent='⬟ 시작 ✓';btn.classList.add('set');}
+  updateGateUI();
+  // 잠시 후 원래 텍스트로 복귀
+  await sleep(1200);
+  if(btn){btn.textContent='⬟ 시작';} // set 스타일은 유지
+}
+
 // ── 기준자세 로그 저장 ──────────────────────────────────────────────────────
 // capture canvas/image as tiny base64 JPEG (120px wide, quality 0.55)
 function _captureThumbnail(sourceEl,maxW=120){
@@ -3691,6 +3728,7 @@ async function init(){
   $('ref-file-input').addEventListener('change',onRefFileSelected);
   $('fp-close').addEventListener('click',closeFramePicker);
   $('fp-save').addEventListener('click',saveRefFrame);
+  $('fp-gate-save').addEventListener('click',saveGateFrame);
   $('fp-photo').addEventListener('click',saveFpPhoto);
   $('fp-prev').addEventListener('click',()=>{
     const fpv=$('fp-vid');fpv.currentTime=Math.max(0,fpv.currentTime-1/30);
@@ -3782,33 +3820,12 @@ async function init(){
         if(vid.paused||vid.readyState<2) checkCameraHealth();
       }
     },3000);
-    $('cam-wrap').addEventListener('touchstart',fixIOSAudioRouting,{once:true});
+    .textContent='AI 모델 로딩 중...';
   }catch(e){
     console.error('Camera:',e);
-    $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';
+    .textContent='카메라 오류: '+e.message;
   }
-
-  $('mdl-txt').textContent=TX[CL].mdl_loading||'로딩 중';
-  try{
-    S.det=await poseDetection.createDetector(
-      poseDetection.SupportedModels.MoveNet,
-      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
-    );
-    if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
-    S.ready=true;
-    $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
-    $('btn-main').disabled=false;
-    $('init').classList.add('gone');
-    setTimeout(checkCameraHealth,400);
-  }catch(e){
-    console.error('Model:',e);
-    $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
-    $('init').classList.add('gone');
-    const rb=document.createElement('div');
-    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
-    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
-    document.body.appendChild(rb);
-  }
+  await loadModel();
   speechSynthesis.getVoices();
 }
 

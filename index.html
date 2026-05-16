@@ -3673,6 +3673,30 @@ function drawPosOverlay(kps, pos){
   }
 }
 
+// ── MODEL LOADER ─────────────────────────────────────────────────────────────
+async function loadModel(){
+  try{
+    S.det=await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
+    );
+    if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
+    S.ready=true;
+    $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
+    $('btn-main').disabled=false;
+    $('init').classList.add('gone');
+    setTimeout(checkCameraHealth,400);
+  }catch(e){
+    console.error('Model:',e);
+    $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
+    $('init').classList.add('gone');
+    const rb=document.createElement('div');
+    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
+    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
+    document.body.appendChild(rb);
+  }
+}
+
 // ── INIT ─────────────────────────────────────────────────────────────────────
 async function init(){
   setAppHeight(); // viewport 높이 즉시 보정
@@ -3827,6 +3851,7 @@ async function init(){
   }
   await loadModel();
   speechSynthesis.getVoices();
+  applyLang();
 }
 
 window.addEventListener('load',init);

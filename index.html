@@ -1457,12 +1457,21 @@ function loop(){
     ctx.clearRect(0,0,cvs.width,cvs.height);
   }
   // ② Trigger async detection at DET_MS rate without blocking rAF
-  // 녹화 중에는 감지 간격을 2배로 늘려 rAF가 더 자주 실행 → 캔버스 프레임 끊김 방지
+  // 녹화 중: setTimeout(fn,0)으로 rAF 완료 후 TF.js 실행
+  //   → captureStream이 현재 프레임 캡처 완료 후 GPU stall 발생 → A/V 싱크 보호
+  //   → DET_MS*5(5fps): 게이트 감지 반응성 유지
+  // 비녹화: 즉시 _runDetection() (기존 동작)
   const now=Date.now();
-  const _activeDET=(_compDrawing||(S.recorder&&S.recorder.state==='recording'))?DET_MS*12:DET_MS; // 녹화 중 ~2fps 감지 → GPU 경합 최소화, 캔버스 프레임 끊김 방지
+  const _recActive=_compDrawing||(S.recorder&&S.recorder.state==='recording');
+  const _activeDET=_recActive?DET_MS*5:DET_MS;
   if(!_detPending&&now-_lastDet>=_activeDET&&vid.readyState>=2){
     _lastDet=now;_detPending=true;
-    _runDetection(); // async — does not await here → rAF keeps running at 60fps
+    if(_recActive){
+      // rAF 콜백 완료 후 macro-task로 실행 → 현재 프레임을 captureStream이 먼저 캡처
+      setTimeout(_runDetection,0);
+    } else {
+      _runDetection(); // 일반 분석: 즉시 실행
+    }
   }
   if(S.live){
     if(_srcMode==='file'&&(vid.ended||vid.paused&&vid.currentTime>=vid.duration-0.1)){stopLive();return;}

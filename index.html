@@ -3820,10 +3820,10 @@ async function init(){
         if(vid.paused||vid.readyState<2) checkCameraHealth();
       }
     },3000);
-    .textContent='AI 모델 로딩 중...';
+    $('i-msg').textContent='AI 모델 로딩 중...';
   }catch(e){
     console.error('Camera:',e);
-    .textContent='카메라 오류: '+e.message;
+    $('i-msg').textContent='카메라 오류: '+e.message;
   }
   await loadModel();
   speechSynthesis.getVoices();

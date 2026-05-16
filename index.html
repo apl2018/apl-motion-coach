@@ -1371,12 +1371,6 @@ async function _runDetection(){
       } else if(cmp){
         const gRef=_gateEntryRef[S.ex.id];
         if(gRef){
-          // ── 방향 게이트 상태머신 ──────────────────────────────────────────
-          // idle  → (시작 자세 진입)  → entry
-          // entry → (시작 자세 이탈)  → primed  (끝 자세 대기 시작)
-          // primed→ (끝 자세 rising-edge) → 렙+피드백 → idle
-          // primed→ (타임아웃)         → idle
-          // ─────────────────────────────────────────────────────────────────
           const devToGate=getAvgDev(angles,gRef);
           const now3=Date.now();
           const _inGate=devToGate!=null&&devToGate<=_GATE_ENTRY_THR;
@@ -1402,7 +1396,9 @@ async function _runDetection(){
               _gateLastPrimeT=now3;
               if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
               if(now3-_lastRepT>=_MIN_REP_MS){
-                const _segMs=(_gateSegmentMs[S.ex.id]||1500)+_GATE_FB_DELAY;
+                // _gateSegmentMs: 시작+끝 프레임 모두 설정 시 실제 구간 사용
+                // 미설정 시 800ms 기본값 (1회 스윙 최소 기준) → 끝 자세 직후 발화
+                const _segMs=(_gateSegmentMs[S.ex.id]||800)+_GATE_FB_DELAY;
                 // ※ _cmpSnap 제거: entry→timing 시점의 스냅샷은 시작 자세 근처의 cmp →
                 //   끝 자세와 큰 편차를 보여 피드백이 항상 오류로 나옴.
                 //   타이머 발화 시점에 _lastCmp (최신 감지 결과) 사용이 정확함.
@@ -1456,22 +1452,13 @@ function loop(){
   }else if(!_detPending){
     ctx.clearRect(0,0,cvs.width,cvs.height);
   }
-  // ② Trigger async detection at DET_MS rate without blocking rAF
-  // 녹화 중: setTimeout(fn,0)으로 rAF 완료 후 TF.js 실행
-  //   → captureStream이 현재 프레임 캡처 완료 후 GPU stall 발생 → A/V 싱크 보호
-  //   → DET_MS*5(5fps): 게이트 감지 반응성 유지
-  // 비녹화: 즉시 _runDetection() (기존 동작)
+  // ② TF.js 감지: DET_MS(40ms ≈ 25fps) 속도로 실행
+  // 카메라 직접 녹화 방식으로 GPU 경합 해소 → 녹화 중에도 throttle 불필요
   const now=Date.now();
-  const _recActive=_compDrawing||(S.recorder&&S.recorder.state==='recording');
-  const _activeDET=_recActive?DET_MS*5:DET_MS;
-  if(!_detPending&&now-_lastDet>=_activeDET&&vid.readyState>=2){
+  // 녹화 중에도 TF.js 정상 속도 유지 — 카메라 직접 녹화로 GPU 경합 없음
+  if(!_detPending&&now-_lastDet>=DET_MS&&vid.readyState>=2){
     _lastDet=now;_detPending=true;
-    if(_recActive){
-      // rAF 콜백 완료 후 macro-task로 실행 → 현재 프레임을 captureStream이 먼저 캡처
-      setTimeout(_runDetection,0);
-    } else {
-      _runDetection(); // 일반 분석: 즉시 실행
-    }
+    _runDetection();
   }
   if(S.live){
     if(_srcMode==='file'&&(vid.ended||vid.paused&&vid.currentTime>=vid.duration-0.1)){stopLive();return;}
@@ -2319,100 +2306,25 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
 
 async function startRecording(){
   if(!S.stream&&_srcMode==='camera') return;
-  // Local closure — isolated from next session's S.recChunks=[] reset
   const _sessionChunks=[];
   S.recChunks=_sessionChunks;
-  // Composite canvas: max 1920px on longest side → 1080p recording quality
-  {
-    const _REC_MAX=1920;
-    var _rawW=vid.videoWidth||$('cam-wrap').offsetWidth||1080;
-    var _rawH=vid.videoHeight||$('cam-wrap').offsetHeight||1920;
-    var _s=Math.max(_rawW,_rawH)>_REC_MAX?_REC_MAX/Math.max(_rawW,_rawH):1;
-    var cw=Math.round(_rawW*_s), ch=Math.round(_rawH*_s);
-  }
-  const comp=document.createElement('canvas');
-  comp.width=cw;comp.height=ch;
-  const compCtx=comp.getContext('2d');
-  S.compCanvas=comp;
+  S.compCanvas=null;
 
-  // Draw composite at 30fps using setInterval (consistent under TF.js load, no throttle)
-  _compDrawing=true;
-  function drawComp(){
-    if(!_compDrawing) return;
-    compCtx.clearRect(0,0,cw,ch);
-    // ── APL intro logo (first 2.5 s of recording) ──────────────────────────
-    // Draw raw video at exact video resolution (sc=1, no offset)
-    try{compCtx.drawImage(vid,0,0,cw,ch);}catch(e){}
-    // Draw skeleton directly from last known keypoints at video coordinates
-    // Interpolate skeleton between detection frames for smooth motion
-    try{
-      let kpsDraw=_lastKps;
-      if(_prevKps&&_lastKps&&_kpsTs>_prevKpsTs){
-        const elapsed=Date.now()-_kpsTs;
-        const dur=Math.max(_kpsTs-_prevKpsTs,DET_MS);
-        const a=Math.min(elapsed/dur,1);
-        kpsDraw=_lastKps.map((kp,i)=>{
-          const p=_prevKps[i];
-          return{...kp,x:p.x+(kp.x-p.x)*a,y:p.y+(kp.y-p.y)*a};
-        });
-      }
-      drawFrameComp(compCtx,cw,ch,kpsDraw,_lastCmp);
-    }catch(e){}
-    // Draw coaching subtitle overlay — visible in saved recording
-    if(_coachOverlay&&Date.now()<_coachOverlay.until){
-      try{
-        const txt=_coachOverlay.text;
-        const fh=Math.max(16,Math.round(ch*0.034));
-        const pad=Math.round(ch*0.013);
-        const maxW=cw-32;
-        compCtx.font=`600 ${fh}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-        // Determine lines first so bar height is correct
-        const half=Math.ceil(txt.length/2);
-        const lines=compCtx.measureText(txt).width>maxW?[txt.slice(0,half),txt.slice(half)]:[txt];
-        const barH=fh*lines.length+pad*(lines.length+1);
-        const barY=ch-barH-Math.round(ch*0.018);
-        compCtx.save();
-        // Semi-transparent bar (sized for actual number of lines)
-        compCtx.fillStyle='rgba(0,0,0,0.72)';
-        compCtx.fillRect(0,barY,cw,barH);
-        // APL red left accent
-        compCtx.fillStyle='#E53935';
-        compCtx.fillRect(0,barY,5,barH);
-        // Text lines — each line properly spaced
-        compCtx.font=`600 ${fh}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-        compCtx.fillStyle='#FFFFFF';
-        compCtx.textAlign='center';
-        compCtx.textBaseline='middle';
-        lines.forEach((line,i)=>{
-          compCtx.fillText(line,cw/2,barY+pad*(i+1)+fh*(i+0.5));
-        });
-        compCtx.restore();
-      }catch(e){}
-    }
+  // ── 새 녹화 구조 ──────────────────────────────────────────────────────────
+  // 카메라 스트림을 MediaRecorder에 직접 연결 — canvas/captureStream 완전 제거
+  // 이유: canvas captureStream + TF.js가 같은 GPU를 공유 →
+  //       TF.js GPU stall이 영상 프레임 드롭, 스켈레톤 싱크 오류, A/V 싱크 오류 유발
+  // 결과: TF.js는 분석에만 집중, 녹화는 네이티브 카메라 스트림 → 완전한 분리
+  // ─────────────────────────────────────────────────────────────────────────
+  _compDrawing=true; // 게이트 _recActive 감지용 플래그 유지
+
+  // 직접 카메라 스트림 구성 (video: 카메라, audio: AudioContext 라우팅)
+  const compStream=new MediaStream();
+  if(S.stream){
+    S.stream.getVideoTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
   }
 
-  let compStream;
-  const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
-  if(_isIOSCam&&S.stream){
-    // iOS: comp.captureStream(30) 시도 — no-timeslice 방식으로 빈 청크 문제 해결됨
-    // 성공 시: 스켈레톤+코칭텍스트+30fps 녹화
-    // 실패 시: raw 카메라 24fps fallback (S.stream 비디오 트랙만)
-    try{
-      compStream=comp.captureStream?comp.captureStream(30):null;
-      if(!compStream||compStream.getVideoTracks().length===0)throw new Error('no video tracks');
-      console.log('[iOS] canvas captureStream OK');
-    }catch(e){
-      console.warn('[iOS] canvas captureStream failed, S.stream fallback:',e.message);
-      compStream=new MediaStream(S.stream.getVideoTracks());
-    }
-  }else{
-    try{compStream=comp.captureStream?comp.captureStream(60):comp.mozCaptureStream(60);}
-    catch(e){
-      compStream=new MediaStream(S.stream?S.stream.getVideoTracks().map(t=>t.clone()):[]);
-    }
-  }
-
-  // Audio: AudioContext 라우팅 (차임 등) + 마이크(피드백 음성 캡처)
+  // Audio: AudioContext 라우팅 (TTS 코칭 음성 + 마이크)
   try{
     if(_recAudioCtx&&_recAudioCtx.state!=='closed'){
       if(!_recAudioDest) _recAudioDest=_recAudioCtx.createMediaStreamDestination();
@@ -2422,19 +2334,17 @@ async function startRecording(){
       prOsc.connect(prGain);prGain.connect(_recAudioDest);
       prOsc.start(_recAudioCtx.currentTime);
       prOsc.stop(_recAudioCtx.currentTime+0.25);
-      // 마이크 → AudioContext → 녹화 (echoCancellation:false로 TTS 음성 억제 없음)
       if(S.audioStream){
         try{
           const micSrc=_recAudioCtx.createMediaStreamSource(S.audioStream);
           const micGain=_recAudioCtx.createGain();
-          micGain.gain.value=2.0; // 마이크 볼륨 증폭
+          micGain.gain.value=2.0;
           micSrc.connect(micGain);micGain.connect(_recAudioDest);
         }catch(e){console.warn('micSrc 연결 실패:',e);}
       }
       if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
       _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
     }
-    // fallback: AudioContext 없을 때 마이크 트랙 직접 추가
     if(S.audioStream&&_recAudioDest===null){
       S.audioStream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t.clone());}catch(e){}});
     }
@@ -2443,10 +2353,10 @@ async function startRecording(){
     _recAudioCtx=null;_recAudioDest=null;
   }
 
+  // MediaRecorder 생성 — iOS는 옵션 없이, 기타는 고화질 설정
+  const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
   let mime;
   if(_isIOSCam){
-    // iOS camera: ZERO OPTIONS — let Safari pick codec, bitrate, everything
-    // Any option can silently break recording on some iOS versions
     try{S.recorder=new MediaRecorder(compStream);}
     catch(e){console.warn('iOS recorder init failed:',e);saveRecording([]);return;}
     mime=S.recorder.mimeType||'video/mp4';
@@ -2458,33 +2368,16 @@ async function startRecording(){
              catch(e2){S.recorder=new MediaRecorder(compStream);}}
   }
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)_sessionChunks.push(e.data);};
-  // wall-clock 보정은 iOS 카메라+마이크 모드에서만 필요 (mic이 trun duration을 56fps로 오염시키는 버그)
-  // 파일 모드에서는 보정 불필요 (보정 시 캔버스 멈춤 시간이 더해져 오히려 느려짐)
   const _recIsCam=_srcMode==='camera';
   S.recorder.onstop=()=>{if(_fallbackSaveTimer){clearTimeout(_fallbackSaveTimer);_fallbackSaveTimer=null;}saveRecording(_sessionChunks,_recIsCam?_recWallMs:0);};
 
-  // Pre-draw current video frame so canvas is never empty when recording starts
-  try{compCtx.drawImage(vid,0,0,cw,ch);drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
-
-  // Start draw loop immediately; delay recorder.start() 200ms so first recorded frame is clean live video
-  // rAF 방식: 디스플레이 주기(60fps)에 동기화 → captureStream 프레임 타이밍 균일 → 흔들림 방지
-  _compDrawing=true; // already set above
-  _rafFrameCount=0;  // 매 녹화 시작 시 초기화
-  (function _drawLoop(){
-    if(!_compDrawing){_drawRafId=null;return;}
-    _drawRafId=requestAnimationFrame(_drawLoop);
-    drawComp();
-    if(S.recorder&&S.recorder.state==='recording') _rafFrameCount++;
-  })();
+  // _drawLoop 없음 — 녹화는 순수 카메라 스트림, GPU 완전 해방
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
-      // NO timeslice for all platforms — single complete video file on stop().
-      // Timeslice recording produces absolute-timestamp chunks that concatenate into a Blob
-      // with wrong duration (1,988+ hours). start() delivers one properly-formed video file.
       try{S.recorder.start();}
       catch(e){console.warn('Recorder start:',e);}
-      _recStartMs=Date.now(); // wall-clock start for timestamp correction
+      _recStartMs=Date.now();
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
       S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
@@ -2512,8 +2405,8 @@ function stopRecording(){
   _compDrawing=false;
   _coachOverlay=null;
   _introUntil=0;
-  if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;} // cancel delayed start if still pending
-  if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
+  if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;}
+  if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;} // 호환성 유지
   if(S.drawCompInterval&&S.drawCompInterval!==1){clearInterval(S.drawCompInterval);}
   S.drawCompInterval=null;
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}

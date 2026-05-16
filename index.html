@@ -1412,7 +1412,7 @@ function loop(){
   // ② Trigger async detection at DET_MS rate without blocking rAF
   // 녹화 중에는 감지 간격을 2배로 늘려 rAF가 더 자주 실행 → 캔버스 프레임 끊김 방지
   const now=Date.now();
-  const _activeDET=(_compDrawing||(S.recorder&&S.recorder.state==='recording'))?DET_MS*2:DET_MS;
+  const _activeDET=(_compDrawing||(S.recorder&&S.recorder.state==='recording'))?DET_MS*5:DET_MS;
   if(!_detPending&&now-_lastDet>=_activeDET&&vid.readyState>=2){
     _lastDet=now;_detPending=true;
     _runDetection(); // async — does not await here → rAF keeps running at 60fps
@@ -2361,16 +2361,15 @@ async function startRecording(){
   try{compCtx.drawImage(vid,0,0,cw,ch);drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
 
   // Start draw loop immediately; delay recorder.start() 200ms so first recorded frame is clean live video
-  // (eliminates 0~0.12s black/intro issue at start of saved video)
-  // setInterval 방식: iOS에서 TF.js WebGL 추론이 ~100ms 메인스레드 블록킹 후 밀린 콜백이
-  // 한꺼번에 실행되어 captureStream이 더 많은 고유 프레임을 캡처할 수 있음 (rAF보다 FPS 향상)
+  // rAF 방식: 디스플레이 주기(60fps)에 동기화 → captureStream 프레임 타이밍 균일 → 흔들림 방지
   _compDrawing=true; // already set above
   _rafFrameCount=0;  // 매 녹화 시작 시 초기화
-  _drawRafId=setInterval(()=>{
-    if(!_compDrawing){clearInterval(_drawRafId);_drawRafId=null;return;}
+  (function _drawLoop(){
+    if(!_compDrawing){_drawRafId=null;return;}
+    _drawRafId=requestAnimationFrame(_drawLoop);
     drawComp();
     if(S.recorder&&S.recorder.state==='recording') _rafFrameCount++;
-  },33); // ~30fps target
+  })();
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
@@ -2397,19 +2396,18 @@ function stopRecording(){
   // 30fps 기준 예상 시간과 wall-clock 중 더 짧은 값을 사용
   // (캔버스 멈춤이 wall-clock을 부풀려 느린 재생을 유발하는 문제 방지)
   if(_recStartMs>0){
+    // 순수 벽시계(wall clock) 사용 — S.recSec setInterval은 TF.js 블록으로 신뢰 불가
+    // S.recSec 기반 상한선 제거: 상한이 너무 낮으면 patchMP4가 영상을 짧게 잘라 10초 멈춤 발생
     const _wallRaw=Date.now()-_recStartMs;
-    // S.recSec = 1초 간격 setInterval 카운터 → rAF throttle 영향 없는 신뢰 기준
-    // wallRaw가 타이머보다 최대 3초 더 길 수 있으므로 +3000ms 여유 허용
-    const _timerMs=Math.max((S.recSec||0)*1000,500);
-    _recWallMs=Math.min(_wallRaw,_timerMs+3000);
-    _recWallMs=Math.max(_recWallMs,_timerMs,1000);
+    _recWallMs=Math.max(_wallRaw,1000);   // 최소 1초
+    _recWallMs=Math.min(_recWallMs,3600000); // 최대 1시간 안전 캡
   }else{_recWallMs=0;}
   _recStartMs=0;
   _compDrawing=false;
   _coachOverlay=null;
   _introUntil=0;
   if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;} // cancel delayed start if still pending
-  if(_drawRafId){clearInterval(_drawRafId);_drawRafId=null;} // setInterval handle (was rAF)
+  if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
   if(S.drawCompInterval&&S.drawCompInterval!==1){clearInterval(S.drawCompInterval);}
   S.drawCompInterval=null;
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}

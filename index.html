@@ -1829,6 +1829,7 @@ let _drawRafId=null;    // requestAnimationFrame handle for composite draw loop
 let _recStartMs=0;      // epoch ms when recorder.start() fired (wall-clock fix)
 let _recWallMs=0;       // actual recording duration ms (passed to patchMP4)
 let _rafFrameCount=0;   // rAF 루프에서 실제 그린 프레임 수 (wall-clock 보정 정확도 향상)
+let _fallbackSaveTimer=null; // fallback save timer handle (cancelled when onstop fires normally)
 let _deviceGamma=0;     // phone left-right roll angle from DeviceOrientationEvent (°)
 let _sensorReady=false; // true once valid sensor data received
 let _srcMode='camera'; // 'camera' | 'file' — analysis source mode
@@ -2286,7 +2287,7 @@ async function startRecording(){
   // wall-clock 보정은 iOS 카메라+마이크 모드에서만 필요 (mic이 trun duration을 56fps로 오염시키는 버그)
   // 파일 모드에서는 보정 불필요 (보정 시 캔버스 멈춤 시간이 더해져 오히려 느려짐)
   const _recIsCam=_srcMode==='camera';
-  S.recorder.onstop=()=>saveRecording(_sessionChunks,_recIsCam?_recWallMs:0);
+  S.recorder.onstop=()=>{if(_fallbackSaveTimer){clearTimeout(_fallbackSaveTimer);_fallbackSaveTimer=null;}saveRecording(_sessionChunks,_recIsCam?_recWallMs:0);};
 
   // Pre-draw current video frame so canvas is never empty when recording starts
   try{compCtx.drawImage(vid,0,0,cw,ch);drawFrameComp(compCtx,cw,ch,_lastKps,_lastCmp);}catch(e){}
@@ -2331,8 +2332,11 @@ function stopRecording(){
   // (캔버스 멈춤이 wall-clock을 부풀려 느린 재생을 유발하는 문제 방지)
   if(_recStartMs>0){
     const _wallRaw=Date.now()-_recStartMs;
-    const _rafEst=_rafFrameCount>0?Math.round(_rafFrameCount*1000/30):_wallRaw;
-    _recWallMs=Math.max(Math.min(_wallRaw,_rafEst*1.15),1000);
+    // S.recSec = 1초 간격 setInterval 카운터 → rAF throttle 영향 없는 신뢰 기준
+    // wallRaw가 타이머보다 최대 3초 더 길 수 있으므로 +3000ms 여유 허용
+    const _timerMs=Math.max((S.recSec||0)*1000,500);
+    _recWallMs=Math.min(_wallRaw,_timerMs+3000);
+    _recWallMs=Math.max(_recWallMs,_timerMs,1000);
   }else{_recWallMs=0;}
   _recStartMs=0;
   _compDrawing=false;
@@ -2351,9 +2355,11 @@ function stopRecording(){
       // no-timeslice mode: stop() alone triggers final ondataavailable before onstop.
       // requestData() caused race condition on iOS (late ondataavailable after onstop).
       S.recorder.stop();
-      setTimeout(()=>{
+      _fallbackSaveTimer=setTimeout(()=>{
+        _fallbackSaveTimer=null;
         if(!_pendingSaveBlob&&_fallbackChunks&&_fallbackChunks.length>0){
-          saveRecording(_fallbackChunks);
+          // fallback: onstop이 4초 내에 발동되지 않은 경우 — wallMs는 현재 _recWallMs 사용
+          saveRecording(_fallbackChunks,_recWallMs);
         } else if(!_pendingSaveBlob){
           saveRecording([]); // show error button
         }
@@ -3744,7 +3750,7 @@ async function init(){
   $('ana-file-input').addEventListener('change',onAnaFileSelected);
   const _shareBtn=$('btn-share');if(_shareBtn)_shareBtn.addEventListener('click',shareRecording);
   const _saveBtn=$('btn-sum-save');
-  if(_saveBtn) _saveBtn.addEventListener('click',()=>shareRecording(true));
+  if(_saveBtn) _saveBtn.addEventListener('click',()=>shareRecording());
   $('btn-main').addEventListener('click',()=>{
     if(!S.ready) return;
     if(S.live)stopLive();else startLive();
@@ -3801,25 +3807,9 @@ async function init(){
     rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
     document.body.appendChild(rb);
   }
-  try{if(localStorage.getItem('apl_premium')==='1')_setPremium(true);}catch(e){}
   speechSynthesis.getVoices();
-  applyLang();
 }
-window.addEventListener('load',init);
-</script>
-</body>
-</html>
-.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
-    $('init').classList.add('gone');
-    const rb=document.createElement('div');
-    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
-    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
-    document.body.appendChild(rb);
-  }
-  try{if(localStorage.getItem('apl_premium')==='1')_setPremium(true);}catch(e){}
-  speechSynthesis.getVoices();
-  applyLang();
-}
+
 window.addEventListener('load',init);
 </script>
 </body>

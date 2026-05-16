@@ -3736,7 +3736,7 @@ async function init(){
     vid.srcObject=null;vid.src=_anaFileURL;
     vid.load();vid.play().catch(()=>{});
   });
-  $('btn-share').addEventListener('click',shareRecording);
+  const _shareBtn=$('btn-share');if(_shareBtn)_shareBtn.addEventListener('click',shareRecording);
   const _saveBtn=$('btn-sum-save');
   if(_saveBtn) _saveBtn.addEventListener('click',()=>{requirePremium(()=>{shareRecording(true);});});
   $('btn-main').addEventListener('click',()=>{

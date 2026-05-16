@@ -1306,13 +1306,8 @@ async function _runDetection(){
       const ov=cmp?overall(cmp):'unk';
       const inZone=isPoseInZone(angles,ref);
       const L=TX[CL];
-      const zb=$('zone-badge');
-      if(isFrontal()){zb.classList.remove('on');}
-      else{
-        zb.classList.add('on');
-        if(inZone){zb.className='on in';zb.textContent=L.zone_in;}
-        else{zb.className='on out';zb.textContent=L.zone_out;}
-      }
+      // zone-badge는 항상 숨김 (분석 중 UI 간소화)
+      $('zone-badge').classList.remove('on');
       if(ref) updateRepOsc(angles,ref);
       S.inZone=inZone;
       if(S.stats&&inZone&&cmp){
@@ -1746,7 +1741,7 @@ function closeFramePicker(){
   $('fp-cvs').getContext('2d').clearRect(0,0,$('fp-cvs').width,$('fp-cvs').height);
   // Restart camera after frame picker closes (screen can go black during ref capture)
   if(_srcMode==='camera'){
-    setTimeout(()=>{ _forceCameraRestart(); },300);
+    setTimeout(()=>{ restartCamera(); },300);
   }
 }
 
@@ -2572,6 +2567,22 @@ async function saveRecording(chunks,wallMs){
   const _saveBtn=$('btn-sum-save');
   if(_saveBtn){_saveBtn.style.display='block';_saveBtn.textContent='📥 영상 저장';}
 }
+async function shareRecording(forceDownload){
+  if(!_pendingSaveBlob){return;}
+  const blob=_pendingSaveBlob, fname=_pendingSaveName;
+  // 모바일(iOS/Android): Web Share API로 카메라롤 저장 시도
+  if(!forceDownload && navigator.canShare){
+    try{
+      const file=new File([blob],fname,{type:blob.type});
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({files:[file],title:'APL Motion Coach'});
+        return;
+      }
+    }catch(e){if(e.name==='AbortError')return;}
+  }
+  // PC 또는 Share API 미지원: 직접 다운로드
+  downloadVideo(blob,fname);
+}
 function downloadVideo(blob,fname){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
@@ -2878,7 +2889,7 @@ async function startLive(){
     const tw=$('traj-wrap'); if(tw) tw.classList.remove('on');
   }
   // (zone-entry globals removed — using simple time-based feedback)
-  $('rep-badge').classList.add('on');if(!isFrontal())$('zone-badge').classList.add('on');
+  $('rep-badge').classList.add('on');
   if(!S.refs[S.ex.id])$('no-ref').classList.add('on');
   startRecording(); // audioStream already set, so skips getUserMedia inside
   loop();
@@ -2916,6 +2927,10 @@ function stopLive(){
 function showSummary(elapsed){
   const st=S.stats;if(!st||st.totalFrames<5) return;
   const L=TX[CL];
+  // 저장 버튼: 이전 blob 초기화 → saveRecording이 완료되면 다시 표시됨
+  _pendingSaveBlob=null;_pendingSaveName='';
+  const _sb=$('btn-sum-save');
+  if(_sb){_sb.style.display='none';_sb.textContent='📥 영상 저장';_sb.style.background='';_sb.style.pointerEvents='';}
   const m=String(Math.floor(elapsed/60)).padStart(2,'0');
   const s=String(elapsed%60).padStart(2,'0');
   const exName=S.ex.name;
@@ -3729,7 +3744,7 @@ async function init(){
   $('ana-file-input').addEventListener('change',onAnaFileSelected);
   const _shareBtn=$('btn-share');if(_shareBtn)_shareBtn.addEventListener('click',shareRecording);
   const _saveBtn=$('btn-sum-save');
-  if(_saveBtn) _saveBtn.addEventListener('click',()=>{requirePremium(()=>{shareRecording(true);});});
+  if(_saveBtn) _saveBtn.addEventListener('click',()=>shareRecording(true));
   $('btn-main').addEventListener('click',()=>{
     if(!S.ready) return;
     if(S.live)stopLive();else startLive();
@@ -3780,6 +3795,21 @@ async function init(){
   }catch(e){
     console.error('Model:',e);
     $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
+    $('init').classList.add('gone');
+    const rb=document.createElement('div');
+    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
+    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
+    document.body.appendChild(rb);
+  }
+  try{if(localStorage.getItem('apl_premium')==='1')_setPremium(true);}catch(e){}
+  speechSynthesis.getVoices();
+  applyLang();
+}
+window.addEventListener('load',init);
+</script>
+</body>
+</html>
+.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
     $('init').classList.add('gone');
     const rb=document.createElement('div');
     rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';

@@ -3715,26 +3715,17 @@ async function init(){
     if(e.key==='Escape'){$('prm-modal').classList.remove('on');_pendingPremiumCb=null;}
   });
   // Source mode (camera / file)
-  const _srcBtns=document.querySelectorAll('.srcbtn');
-  _srcBtns.forEach(b=>{
-    b.addEventListener('click',()=>{
-      if(S.live||S.caps) return;
-      _srcBtns.forEach(x=>x.classList.remove('on'));
-      b.classList.add('on');_srcMode=b.dataset.src;
-      if(_srcMode==='file'){
-        $('ana-file-input').click();
-      } else {
-        if(_anaFileURL){URL.revokeObjectURL(_anaFileURL);_anaFileURL=null;}
-        vid.srcObject=S.stream;vid.play().catch(()=>{});
-      }
-    });
-  });
+  $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));
+  $('src-file-btn').addEventListener('click',()=>switchSrcMode('file'));
   $('ana-file-input').addEventListener('change',e=>{
     const file=e.target.files[0];if(!file) return;
     if(_anaFileURL){URL.revokeObjectURL(_anaFileURL);_anaFileURL=null;}
     _anaFileURL=URL.createObjectURL(file);
-    vid.srcObject=null;vid.src=_anaFileURL;
+    $('ana-file-label').textContent=file.name;
+    vid.srcObject=null;vid.style.transform='';cvs.style.transform='';
+    vid.src=_anaFileURL;
     vid.load();vid.play().catch(()=>{});
+    $('btn-main').disabled=!S.ready;
   });
   const _shareBtn=$('btn-share');if(_shareBtn)_shareBtn.addEventListener('click',shareRecording);
   const _saveBtn=$('btn-sum-save');

@@ -1392,6 +1392,7 @@ async function _runDetection(){
               _gateState='entry';
             } else if(_gateState==='timing'){
               // 스윙 중 시작 자세로 돌아옴 → 리셋 (동작 중단 또는 반복)
+              clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null;
               _gateArmed=false;
               _gateState='entry';
             }
@@ -1401,8 +1402,36 @@ async function _runDetection(){
               _gateState='timing';
               _gateLastPrimeT=now3;
               _gateArmed=(now3-_lastRepT>=_MIN_REP_MS); // 최소 간격 통과 시만 arm
+              // 백업 타이머: updateRepOsc local min 미감지 시 세그먼트 시간 후 자동 발화
+              if(_gateArmed){
+                clearTimeout(_pendingGateFBTimer);
+                const _segMs=(_gateSegmentMs[S.ex.id]||1200);
+                const _backupDelay=_segMs+400;
+                const _exId2=S.ex.id;
+                _pendingGateFBTimer=setTimeout(()=>{
+                  if(!_gateArmed||!_lastCmp) return; // updateRepOsc가 먼저 처리함
+                  _gateArmed=false; _gateState='idle';
+                  _lastRepT=Date.now();
+                  S.repCount++; $('rep-num').textContent=S.repCount; $('rep-badge').classList.add('on');
+                  const _fc=_lastCmp;
+                  setTimeout(()=>{
+                    if(S.speak) return;
+                    let _t=null;
+                    const _o=overall(_fc);
+                    if(_o==='good'){
+                      const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];
+                      _t=_gp[Math.floor(Math.random()*_gp.length)];
+                    }else{
+                      const _fb=primaryFB(_fc);
+                      if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_t=_msgs[_fb.st]||_msgs.warn;}}
+                    }
+                    if(_t) speak(_t);
+                  },_GATE_FB_DELAY);
+                },_backupDelay);
+              }
             } else if(_gateState==='timing'){
               if(now3-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
+                clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null;
                 _gateArmed=false;
                 _gateState='idle';
               }
@@ -1946,6 +1975,7 @@ function updateRepOsc(angles,ref){
       // ── 게이트 피드백: 끝 자세 도달 감지 시 1회 발화 ──────────────────
       // _gateArmed=true (시작 자세 이탈 후 대기 중) + 측면 뷰 + 기준 자세 있음
       if(_gateArmed&&!isFrontal()&&_lastCmp){
+        clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null; // 백업 타이머 취소
         _gateArmed=false;          // 즉시 소비 → 이중 발화 방지
         _gateState='idle';
         _lastRepT=now;
@@ -2379,11 +2409,17 @@ async function startRecording(){
   let compStream;
   const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
   try{
-    compStream=comp.captureStream?comp.captureStream(30):comp.mozCaptureStream(30);
-    if(!compStream||compStream.getVideoTracks().length===0) throw new Error('no video tracks');
+    compStream=comp.captureStream?comp.captureStream(30):(comp.mozCaptureStream?comp.mozCaptureStream(30):null);
+    if(!compStream) throw new Error('captureStream unsupported');
+    // getVideoTracks().length 체크 제거 — 일부 브라우저는 track이 비동기로 추가됨
   }catch(e){
-    // captureStream 실패 시 카메라 직접 fallback
-    compStream=new MediaStream(S.stream?S.stream.getVideoTracks().map(t=>t.clone()):[]);
+    console.warn('captureStream failed:',e);
+    // 카메라 모드에서만 camera stream fallback — 파일 모드에서 카메라가 노출되는 버그 방지
+    if(_srcMode==='camera'&&S.stream){
+      compStream=new MediaStream(S.stream.getVideoTracks().map(t=>t.clone()));
+    }else{
+      compStream=new MediaStream(); // 파일 모드: 빈 스트림 (오디오만)
+    }
   }
 
   // Audio: AudioContext + 마이크

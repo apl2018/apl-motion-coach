@@ -1380,57 +1380,64 @@ async function _runDetection(){
           const devToGate=getAvgDev(angles,gRef);
           const now3=Date.now();
           const _inGate=devToGate!=null&&devToGate<=_GATE_ENTRY_THR;
-
+          // ── 세그먼트 타이머 기반 게이트 상태머신 ────────────────────────────
+          // idle  → (시작 자세 진입)  → entry
+          // entry → (시작 자세 이탈)  → timing  ← 세그먼트 타이머 시작
+          // timing→ (타이머 만료)      → 렙+피드백 → idle
+          // timing→ (시작 자세 재진입) → entry    ← 타이머 취소 (동작 중단)
+          // timing→ (타임아웃)         → idle
+          // ──────────────────────────────────────────────────────────────────
           if(_inGate){
-            // 시작 자세 구역 안
-            // ※ idle 상태일 때만 entry 전환 — primed 중 재진입은 무시
-            //   (스윙 도중 시작 각도와 유사한 자세를 지날 때 primed가 리셋되는 버그 방지)
             if(_gateState==='idle'){
               _gateState='entry';
+            } else if(_gateState==='timing'){
+              // 타이밍 중 시작 자세로 돌아옴 → 동작 중단, 타이머 취소
+              if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
+              _gateState='entry';
             }
-            _gateLastPrimeT=now3;
           } else {
-            // 시작 자세 구역 밖
             if(_gateState==='entry'){
-              // 방금 시작 자세를 벗어남 → primed (끝 자세 대기)
-              _gateState='primed';
-              _gateLastPrimeT=now3; // primed 타임아웃 기산
-            } else if(_gateState==='primed'){
-              // ※ else if — entry→primed 전환과 primed 트리거가 동일 프레임에
-              //   동시 실행되는 버그 방지 (즉각 더블 트리거 원인)
+              // 시작 자세를 벗어남 → timing: 세그먼트 기간만큼 타이머 설정
+              _gateState='timing';
+              _gateLastPrimeT=now3;
+              if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
+              if(now3-_lastRepT>=_MIN_REP_MS){
+                const _segMs=(_gateSegmentMs[S.ex.id]||1500)+_GATE_FB_DELAY;
+                // ※ _cmpSnap 제거: entry→timing 시점의 스냅샷은 시작 자세 근처의 cmp →
+                //   끝 자세와 큰 편차를 보여 피드백이 항상 오류로 나옴.
+                //   타이머 발화 시점에 _lastCmp (최신 감지 결과) 사용이 정확함.
+                const _capExId=S.ex.id; // exId 클로저 고정
+                _pendingGateFBTimer=setTimeout(()=>{
+                  _pendingGateFBTimer=null;
+                  if(_gateState!=='timing') return; // 취소됐으면 무시
+                  _gateState='idle';
+                  _lastRepT=Date.now();
+                  S.repCount++;
+                  $('rep-num').textContent=S.repCount;
+                  S.lastFB=Date.now();S.goodN=0;
+                  // 피드백 내용 평가: 타이머 발화 시점의 최신 cmp 사용 (끝 자세 직후)
+                  const _liveCmp=_lastCmp; // 발화 시점의 실시간 비교 데이터
+                  if(!_liveCmp) return;
+                  let _fbText=null;
+                  const _ov=overall(_liveCmp);
+                  if(_ov==='good'){
+                    const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];
+                    _fbText=_gp[Math.floor(Math.random()*_gp.length)];
+                  } else {
+                    const _fb=primaryFB(_liveCmp);
+                    if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs&&_msgs[_fb.st]){_fbText=_msgs[_fb.st];}else if(_msgs){_fbText=_msgs.warn;}}
+                  }
+                  if(_fbText&&!S.speak) speak(_fbText);
+                },_segMs);
+              }
+            } else if(_gateState==='timing'){
+              // 타임아웃 체크 (타이머가 아직 pending 중인데 너무 오래 된 경우)
               if(now3-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
-                _gateState='idle'; // 타임아웃: 다시 시작
-              } else if(inZone&&!_gateWasInZone&&now3-_lastRepT>=_MIN_REP_MS){
-                // 끝 자세 구역 rising-edge → 렙 인정
-                _gateState='idle';
-                _lastRepT=now3;
-                S.repCount++;
-                $('rep-num').textContent=S.repCount;
-                S.lastFB=now3;S.goodN=0;
-                // 피드백 내용 평가
-                const _ov=overall(cmp);
-                if(_ov==='good'){
-                  const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];
-                  _pendingGateFB=_gp[Math.floor(Math.random()*_gp.length)];
-                } else {
-                  const _fb=primaryFB(cmp);
-                  if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_pendingGateFB=_msgs[_fb.st]||_msgs.warn;}}
-                }
-                // ── 타이머 방식: 끝 자세 도달 후 _GATE_FB_DELAY ms 뒤 1회 발화 ──
-                // _pendingGateFB는 로컬 변수로 캡처 → 외부 상태 변경에 무관하게 딱 1회 실행
                 if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
-                if(_pendingGateFB){
-                  const _fbCapture=_pendingGateFB; // 클로저에 값 고정 캡처
-                  _pendingGateFB=null;              // 즉시 소비 → 중복 발화 원천 차단
-                  _pendingGateFBTimer=setTimeout(()=>{
-                    _pendingGateFBTimer=null;
-                    if(!S.speak) speak(_fbCapture);
-                  },_GATE_FB_DELAY);
-                }
+                _gateState='idle';
               }
             }
           }
-          _gateWasInZone=inZone;
         } else {
           doFeedback(cmp,inZone);
         }
@@ -1452,7 +1459,7 @@ function loop(){
   // ② Trigger async detection at DET_MS rate without blocking rAF
   // 녹화 중에는 감지 간격을 2배로 늘려 rAF가 더 자주 실행 → 캔버스 프레임 끊김 방지
   const now=Date.now();
-  const _activeDET=(_compDrawing||(S.recorder&&S.recorder.state==='recording'))?DET_MS*5:DET_MS;
+  const _activeDET=(_compDrawing||(S.recorder&&S.recorder.state==='recording'))?DET_MS*12:DET_MS; // 녹화 중 ~2fps 감지 → GPU 경합 최소화, 캔버스 프레임 끊김 방지
   if(!_detPending&&now-_lastDet>=_activeDET&&vid.readyState>=2){
     _lastDet=now;_detPending=true;
     _runDetection(); // async — does not await here → rAF keeps running at 60fps
@@ -1628,6 +1635,26 @@ async function saveRefFrame(){
   if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
   S.refs[S.ex.id]=angles;
   try{localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));}catch(e){}
+  // 세그먼트 시간 계산: |끝 프레임 타임 - 시작 프레임 타임| × 1000 ms
+  {
+    const _fpVidEl2=$('fp-vid');
+    if(_fpVidEl2){
+      const _endT=_fpVidEl2.currentTime;
+      // 끝 프레임 비디오 타임 저장 (시작 프레임 재저장 시에도 재계산 가능)
+      _gateEndVideoT[S.ex.id]=_endT;
+      try{localStorage.setItem('apl_gate_end_t_'+S.ex.id,String(_endT));}catch(e){}
+      const _startT=_gateStartVideoT[S.ex.id]!=null
+        ?_gateStartVideoT[S.ex.id]
+        :(()=>{const _r=localStorage.getItem('apl_gate_start_t_'+S.ex.id);return _r!=null?parseFloat(_r):null;})();
+      if(_startT!=null){
+        const _segMs=Math.round(Math.abs(_endT-_startT)*1000);
+        if(_segMs>=100){  // 최소 100ms 이상만 유효
+          _gateSegmentMs[S.ex.id]=_segMs;
+          try{localStorage.setItem('apl_gate_seg_'+S.ex.id,String(_segMs));}catch(e){}
+        }
+      }
+    }
+  }
   if(isFrontal()){
     const fpv=$('fp-vid');
     if(fpv){
@@ -1651,6 +1678,9 @@ async function saveRefFrame(){
   if(!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) saveFpPhoto();
   const succ=$('succ');succ.classList.add('on');
   speak(TX[CL].voice_ref_saved);
+  // 세그먼트 시간 토스트 표시
+  const _segDisp=_gateSegmentMs[S.ex.id]?'구간 '+(_gateSegmentMs[S.ex.id]/1000).toFixed(1)+'s 저장됨 ✓':null;
+  if(_segDisp) _showFpToast(_segDisp);
   await sleep(1400);succ.classList.remove('on');
   closeFramePicker();updateRefUI();updateExChips();
   $('btn-main').disabled=false;
@@ -1667,6 +1697,20 @@ async function saveGateFrame(){
   const id=S.ex.id;
   _gateEntryRef[id]={...angles};
   try{localStorage.setItem('apl_gate_'+id,JSON.stringify(_gateEntryRef[id]));}catch(e){}
+  // 시작 프레임 비디오 타임 저장 (세그먼트 시간 계산용)
+  const _fpVidEl=$('fp-vid');
+  if(_fpVidEl){
+    _gateStartVideoT[id]=_fpVidEl.currentTime;
+    try{localStorage.setItem('apl_gate_start_t_'+id,String(_gateStartVideoT[id]));}catch(e){}
+    // 끝 프레임이 이미 설정돼 있으면 세그먼트 시간 재계산
+    const _eT=_gateEndVideoT[id]!=null
+      ?_gateEndVideoT[id]
+      :(()=>{const _r=localStorage.getItem('apl_gate_end_t_'+id);return _r!=null?parseFloat(_r):null;})();
+    if(_eT!=null){
+      const _sMs=Math.round(Math.abs(_eT-_gateStartVideoT[id])*1000);
+      if(_sMs>=100){_gateSegmentMs[id]=_sMs;try{localStorage.setItem('apl_gate_seg_'+id,String(_sMs));}catch(e){}}
+    }
+  }
   // 버튼에 설정됨 표시 — ✓ 영구 유지
   const btn=$('fp-gate-save');
   if(btn){btn.textContent='▷ 시작 ✓';btn.classList.add('set');}
@@ -1865,21 +1909,23 @@ const OSC_COOL_MS=600;// min 600ms between reps (prevents double-count on noise)
 const OSC_MAX_DEV=80; // only count rep if closest approach ≤80° avg deviation
 
 // ── DIRECTION GATE ───────────────────────────────────────────────────────────
-// 방향 게이트: 진입 자세(예: 백스윙 탑)를 통과한 뒤 기준 자세에 진입할 때만 피드백
+// 방향 게이트: 진입 자세(시작 자세)를 통과한 뒤 세그먼트 시간(끝자세 - 시작자세 구간) +
+//             300ms 뒤에 피드백 1회 발화하는 타이머 기반 방식
 let _gateEntryRef = {};     // {[exId]: angles} — 진입 자세 (운동별 저장)
-let _gateState = 'idle';    // 'idle' | 'primed' (진입 자세 통과 후 대기)
-let _gateLastPrimeT = 0;    // primed 상태가 마지막으로 갱신된 시각
-let _gateWasInZone = false; // 이전 프레임에서 기준 자세 구역 안에 있었는지
+let _gateState = 'idle';    // 'idle' | 'entry' | 'timing'
+let _gateLastPrimeT = 0;    // timing 진입 시각 (타임아웃용)
+let _gateWasInZone = false; // 이전 프레임에서 기준 자세 구역 안에 있었는지 (미사용 — 호환)
 let _gateSpeechSkip = false; // 음성 재생 중 게이트 트리거 → 다음 1회 피드백 스킵
 let _lastRepT = 0;          // 마지막 렙 인정 시각 (이중 트리거 방지)
-const _MIN_REP_MS = 1500;   // 연속 렙 최소 간격 ms (같은 스윙 내 이중 트리거 방지)
-let _pendingGateFB = null;  // 렙 카운트 후 발화 대기 피드백
-let _pendingGateFBTimer = null; // 피드백 발화 타이머 (zone 이탈 대신 고정 딜레이)
-const _GATE_FB_DELAY = 300; // 끝 자세 도달 후 피드백까지 딜레이 ms
-// ※ falling-edge 방식 제거 이유: ZONE_THRESH=45°가 넓어 어드레스→피니쉬 내내 inZone=true
-//   유지되는 경우 falling-edge가 다음 백스윙 시작까지 지연돼 "어드레스에서 피드백" 현상 발생
+const _MIN_REP_MS = 800;    // 연속 렙 최소 간격 ms
+let _pendingGateFB = null;  // 렙 카운트 후 발화 대기 피드백 (미사용 — 호환)
+let _pendingGateFBTimer = null; // 피드백 발화 타이머
+const _GATE_FB_DELAY = 300; // 세그먼트 종료 후 피드백까지 추가 딜레이 ms
 const _GATE_ENTRY_THR = 40; // 진입 자세 인식 임계값 (평균 편차 °)
-const _GATE_PRIME_TIMEOUT = 8000; // 진입 자세 통과 후 피드백 대기 최대 시간 ms
+const _GATE_PRIME_TIMEOUT = 12000; // 타이밍 상태 최대 유지 시간 ms
+let _gateSegmentMs = {};    // {[exId]: ms} — 시작→끝 프레임 구간 시간
+let _gateStartVideoT = {};  // {[exId]: sec} — 시작 프레임 비디오 타임
+let _gateEndVideoT = {};    // {[exId]: sec} — 끝 프레임 비디오 타임
 
 function getAvgDev(angles,ref){
   if(!ref) return null;
@@ -2993,6 +3039,7 @@ async function startLive(){
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
   _gateState='idle';_gateLastPrimeT=0;_gateWasInZone=false;_gateSpeechSkip=false;_lastRepT=0;_pendingGateFB=null;
   if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
+  // 타이밍 타이머도 동일하게 정리 (timing 상태에서 reset 시)
   resetRepOsc();
   $('rep-num').textContent='0';
   S.live=true;S.lastFB=0;S.lastPr=0;S.goodN=0;S.speak=false;
@@ -3150,8 +3197,13 @@ function showSummary(elapsed){
 function updateGateUI(){
   const el=$('gate-status');if(!el) return;
   const set=!!_gateEntryRef[S.ex.id];
+  const _segMsDisp=_gateSegmentMs[S.ex.id];
   if(set){
-    el.textContent='▷ 시작 프레임 설정됨 — 게이트 자동 활성';
+    // 세그먼트 시간이 있으면 표시 (시작+끝 프레임 모두 설정된 경우)
+    const _dispSec=_segMsDisp?(_segMsDisp/1000).toFixed(1)+'s':null;
+    el.textContent=_dispSec
+      ?'▷ 게이트 활성 — 구간 '+_dispSec+' (+0.3s 피드백)'
+      :'▷ 시작 프레임 설정됨 — 끝 프레임도 설정하세요';
     el.classList.add('set');
   } else {
     el.textContent='';
@@ -3802,6 +3854,12 @@ async function init(){
     try{
       const graw=localStorage.getItem('apl_gate_'+ex.id);
       if(graw){_gateEntryRef[ex.id]=JSON.parse(graw);}
+      const _gseg=localStorage.getItem('apl_gate_seg_'+ex.id);
+      if(_gseg){_gateSegmentMs[ex.id]=parseInt(_gseg,10);}
+      const _gst=localStorage.getItem('apl_gate_start_t_'+ex.id);
+      if(_gst){_gateStartVideoT[ex.id]=parseFloat(_gst);}
+      const _get=localStorage.getItem('apl_gate_end_t_'+ex.id);
+      if(_get){_gateEndVideoT[ex.id]=parseFloat(_get);}
     }catch(e){}
   }
   buildExChips();updateRefUI();

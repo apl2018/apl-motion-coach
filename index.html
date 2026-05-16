@@ -1381,55 +1381,29 @@ async function _runDetection(){
           // timing→ (시작 자세 재진입) → entry    ← 타이머 취소 (동작 중단)
           // timing→ (타임아웃)         → idle
           // ──────────────────────────────────────────────────────────────────
+          // ── 간소화된 게이트 상태머신 (타이머 방식 → updateRepOsc 기반) ──────
+          // idle  → (시작 자세 진입)  → entry
+          // entry → (시작 자세 이탈)  → timing [_gateArmed=true]
+          // timing: updateRepOsc가 끝자세 도달 감지 → 피드백 → idle
+          // timing: 시작 자세 재진입 → entry [_gateArmed=false]
+          // timing: 타임아웃(12s) → idle
           if(_inGate){
             if(_gateState==='idle'){
               _gateState='entry';
             } else if(_gateState==='timing'){
-              // 타이밍 중 시작 자세로 돌아옴 → 동작 중단, 타이머 취소
-              if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
+              // 스윙 중 시작 자세로 돌아옴 → 리셋 (동작 중단 또는 반복)
+              _gateArmed=false;
               _gateState='entry';
             }
           } else {
             if(_gateState==='entry'){
-              // 시작 자세를 벗어남 → timing: 세그먼트 기간만큼 타이머 설정
+              // 시작 자세 이탈 → armed: 끝 자세 도달 대기
               _gateState='timing';
               _gateLastPrimeT=now3;
-              if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
-              if(now3-_lastRepT>=_MIN_REP_MS){
-                // _gateSegmentMs: 시작+끝 프레임 모두 설정 시 실제 구간 사용
-                // 미설정 시 800ms 기본값 (1회 스윙 최소 기준) → 끝 자세 직후 발화
-                const _segMs=(_gateSegmentMs[S.ex.id]||800)+_GATE_FB_DELAY;
-                // ※ _cmpSnap 제거: entry→timing 시점의 스냅샷은 시작 자세 근처의 cmp →
-                //   끝 자세와 큰 편차를 보여 피드백이 항상 오류로 나옴.
-                //   타이머 발화 시점에 _lastCmp (최신 감지 결과) 사용이 정확함.
-                const _capExId=S.ex.id; // exId 클로저 고정
-                _pendingGateFBTimer=setTimeout(()=>{
-                  _pendingGateFBTimer=null;
-                  if(_gateState!=='timing') return; // 취소됐으면 무시
-                  _gateState='idle';
-                  _lastRepT=Date.now();
-                  S.repCount++;
-                  $('rep-num').textContent=S.repCount;
-                  S.lastFB=Date.now();S.goodN=0;
-                  // 피드백 내용 평가: 타이머 발화 시점의 최신 cmp 사용 (끝 자세 직후)
-                  const _liveCmp=_lastCmp; // 발화 시점의 실시간 비교 데이터
-                  if(!_liveCmp) return;
-                  let _fbText=null;
-                  const _ov=overall(_liveCmp);
-                  if(_ov==='good'){
-                    const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];
-                    _fbText=_gp[Math.floor(Math.random()*_gp.length)];
-                  } else {
-                    const _fb=primaryFB(_liveCmp);
-                    if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs&&_msgs[_fb.st]){_fbText=_msgs[_fb.st];}else if(_msgs){_fbText=_msgs.warn;}}
-                  }
-                  if(_fbText&&!S.speak) speak(_fbText);
-                },_segMs);
-              }
+              _gateArmed=(now3-_lastRepT>=_MIN_REP_MS); // 최소 간격 통과 시만 arm
             } else if(_gateState==='timing'){
-              // 타임아웃 체크 (타이머가 아직 pending 중인데 너무 오래 된 경우)
               if(now3-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
-                if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
+                _gateArmed=false;
                 _gateState='idle';
               }
             }
@@ -1452,10 +1426,9 @@ function loop(){
   }else if(!_detPending){
     ctx.clearRect(0,0,cvs.width,cvs.height);
   }
-  // ② TF.js 감지: DET_MS(40ms ≈ 25fps) 속도로 실행
-  // 카메라 직접 녹화 방식으로 GPU 경합 해소 → 녹화 중에도 throttle 불필요
+  // ② TF.js 감지: DET_MS(40ms ≈ 25fps) — 녹화 중에도 throttle 없음
+  // 녹화 canvas는 setInterval(33ms) 독립 루프 → TF.js rAF 지연에 영향 안받음
   const now=Date.now();
-  // 녹화 중에도 TF.js 정상 속도 유지 — 카메라 직접 녹화로 GPU 경합 없음
   if(!_detPending&&now-_lastDet>=DET_MS&&vid.readyState>=2){
     _lastDet=now;_detPending=true;
     _runDetection();
@@ -1910,18 +1883,22 @@ const OSC_MAX_DEV=80; // only count rep if closest approach ≤80° avg deviatio
 let _gateEntryRef = {};     // {[exId]: angles} — 진입 자세 (운동별 저장)
 let _gateState = 'idle';    // 'idle' | 'entry' | 'timing'
 let _gateLastPrimeT = 0;    // timing 진입 시각 (타임아웃용)
-let _gateWasInZone = false; // 이전 프레임에서 기준 자세 구역 안에 있었는지 (미사용 — 호환)
-let _gateSpeechSkip = false; // 음성 재생 중 게이트 트리거 → 다음 1회 피드백 스킵
-let _lastRepT = 0;          // 마지막 렙 인정 시각 (이중 트리거 방지)
-const _MIN_REP_MS = 800;    // 연속 렙 최소 간격 ms
-let _pendingGateFB = null;  // 렙 카운트 후 발화 대기 피드백 (미사용 — 호환)
-let _pendingGateFBTimer = null; // 피드백 발화 타이머
-const _GATE_FB_DELAY = 300; // 세그먼트 종료 후 피드백까지 추가 딜레이 ms
-const _GATE_ENTRY_THR = 40; // 진입 자세 인식 임계값 (평균 편차 °)
-const _GATE_PRIME_TIMEOUT = 12000; // 타이밍 상태 최대 유지 시간 ms
-let _gateSegmentMs = {};    // {[exId]: ms} — 시작→끝 프레임 구간 시간
-let _gateStartVideoT = {};  // {[exId]: sec} — 시작 프레임 비디오 타임
-let _gateEndVideoT = {};    // {[exId]: sec} — 끝 프레임 비디오 타임
+let _gateWasInZone = false; // 호환성 유지 (미사용)
+let _gateSpeechSkip = false;
+let _lastRepT = 0;
+const _MIN_REP_MS = 800;
+let _pendingGateFB = null;
+let _pendingGateFBTimer = null;
+const _GATE_FB_DELAY = 300; // 끝 자세 도달 후 피드백까지 딜레이 ms
+const _GATE_ENTRY_THR = 40; // 시작 자세 인식 임계값 (평균 편차 °)
+const _GATE_PRIME_TIMEOUT = 12000;
+let _gateSegmentMs = {};
+let _gateStartVideoT = {};
+let _gateEndVideoT = {};
+// ── 새 게이트 방식: updateRepOsc 기반 ─────────────────────────────────────
+// _gateArmed: 시작 자세 이탈 후 끝 자세 도달을 기다리는 플래그
+// updateRepOsc가 끝 자세 도달(local min) 감지 → _gateArmed면 피드백 발화
+let _gateArmed = false;
 
 function getAvgDev(angles,ref){
   if(!ref) return null;
@@ -1966,6 +1943,27 @@ function updateRepOsc(angles,ref){
       _oscLastMax=p.dev; // reset max tracking from this point
       // 새 rep 시작 시 피드백 즉시 리셋
       S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
+      // ── 게이트 피드백: 끝 자세 도달 감지 시 1회 발화 ──────────────────
+      // _gateArmed=true (시작 자세 이탈 후 대기 중) + 측면 뷰 + 기준 자세 있음
+      if(_gateArmed&&!isFrontal()&&_lastCmp){
+        _gateArmed=false;          // 즉시 소비 → 이중 발화 방지
+        _gateState='idle';
+        _lastRepT=now;
+        const _fbCmp=_lastCmp;    // 끝 자세 도달 순간의 비교 데이터 (가장 정확)
+        setTimeout(()=>{
+          if(S.speak) return;
+          let _fbText=null;
+          const _ov=overall(_fbCmp);
+          if(_ov==='good'){
+            const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];
+            _fbText=_gp[Math.floor(Math.random()*_gp.length)];
+          }else{
+            const _fb=primaryFB(_fbCmp);
+            if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_fbText=_msgs[_fb.st]||_msgs.warn;}}
+          }
+          if(_fbText) speak(_fbText);
+        },_GATE_FB_DELAY);
+      }
     }
   }
 }
@@ -2308,23 +2306,87 @@ async function startRecording(){
   if(!S.stream&&_srcMode==='camera') return;
   const _sessionChunks=[];
   S.recChunks=_sessionChunks;
-  S.compCanvas=null;
 
-  // ── 새 녹화 구조 ──────────────────────────────────────────────────────────
-  // 카메라 스트림을 MediaRecorder에 직접 연결 — canvas/captureStream 완전 제거
-  // 이유: canvas captureStream + TF.js가 같은 GPU를 공유 →
-  //       TF.js GPU stall이 영상 프레임 드롭, 스켈레톤 싱크 오류, A/V 싱크 오류 유발
-  // 결과: TF.js는 분석에만 집중, 녹화는 네이티브 카메라 스트림 → 완전한 분리
-  // ─────────────────────────────────────────────────────────────────────────
-  _compDrawing=true; // 게이트 _recActive 감지용 플래그 유지
+  // ── 녹화 캔버스: 카메라 영상 + 코칭텍스트만 (스켈레톤 제거)
+  // 이유: TF.js WebGL과 skeleton drawFrameComp가 같은 GPU 공유 →
+  //       프레임 드롭, A/V 싱크 오류, 스켈레톤 싱크 오류 동시 발생
+  // 해결: drawImage(vid) + 텍스트만 = 2D blit 수준 GPU 사용 → TF.js 간섭 없음
+  const _REC_MAX=1920;
+  var _rawW=vid.videoWidth||$('cam-wrap').offsetWidth||1080;
+  var _rawH=vid.videoHeight||$('cam-wrap').offsetHeight||1920;
+  var _s=Math.max(_rawW,_rawH)>_REC_MAX?_REC_MAX/Math.max(_rawW,_rawH):1;
+  var cw=Math.round(_rawW*_s), ch=Math.round(_rawH*_s);
+  const comp=document.createElement('canvas');
+  comp.width=cw; comp.height=ch;
+  const compCtx=comp.getContext('2d');
+  S.compCanvas=comp;
 
-  // 직접 카메라 스트림 구성 (video: 카메라, audio: AudioContext 라우팅)
-  const compStream=new MediaStream();
-  if(S.stream){
-    S.stream.getVideoTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
+  function drawComp(){
+    if(!_compDrawing) return;
+    try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
+    // 스켈레톤 오버레이: 캐시된 _lastKps 사용 (TF.js 직접 호출 없음)
+    // _prevKps/_lastKps 보간으로 TF.js 업데이트(~15fps) 사이에도 부드럽게 표시
+    try{
+      if(_lastKps){
+        let kpsDraw=_lastKps;
+        if(_prevKps&&_lastKps&&_kpsTs>_prevKpsTs){
+          const elapsed=Date.now()-_kpsTs;
+          const dur=Math.max(_kpsTs-_prevKpsTs,DET_MS);
+          const a=Math.min(elapsed/dur,1);
+          kpsDraw=_lastKps.map((kp,i)=>{
+            const p=_prevKps[i];
+            return{...kp,x:p.x+(kp.x-p.x)*a,y:p.y+(kp.y-p.y)*a};
+          });
+        }
+        drawFrameComp(compCtx,cw,ch,kpsDraw,_lastCmp);
+      }
+    }catch(e){}
+    // 코칭 자막 오버레이
+    if(_coachOverlay&&Date.now()<_coachOverlay.until){
+      try{
+        const txt=_coachOverlay.text;
+        const fh=Math.max(16,Math.round(ch*0.034));
+        const pad=Math.round(ch*0.013);
+        const maxW=cw-32;
+        compCtx.font=`600 ${fh}px -apple-system,sans-serif`;
+        const half=Math.ceil(txt.length/2);
+        const lines=compCtx.measureText(txt).width>maxW?[txt.slice(0,half),txt.slice(half)]:[txt];
+        const barH=fh*lines.length+pad*(lines.length+1);
+        const barY=ch-barH-Math.round(ch*0.018);
+        compCtx.save();
+        compCtx.fillStyle='rgba(0,0,0,0.72)';
+        compCtx.fillRect(0,barY,cw,barH);
+        compCtx.fillStyle='#E53935';
+        compCtx.fillRect(0,barY,5,barH);
+        compCtx.font=`600 ${fh}px -apple-system,sans-serif`;
+        compCtx.fillStyle='#FFFFFF';
+        compCtx.textAlign='center';
+        compCtx.textBaseline='middle';
+        lines.forEach((line,i)=>{
+          compCtx.fillText(line,cw/2,barY+pad*(i+1)+fh*(i+0.5));
+        });
+        compCtx.restore();
+      }catch(e){}
+    }
   }
 
-  // Audio: AudioContext 라우팅 (TTS 코칭 음성 + 마이크)
+  // setInterval(33ms) = 30fps: rAF와 독립 → TF.js rAF 지연에 영향 안받음
+  _compDrawing=true;
+  try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
+  S.drawCompInterval=setInterval(drawComp,33);
+
+  // captureStream: iOS는 30fps, 기타는 30fps
+  let compStream;
+  const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
+  try{
+    compStream=comp.captureStream?comp.captureStream(30):comp.mozCaptureStream(30);
+    if(!compStream||compStream.getVideoTracks().length===0) throw new Error('no video tracks');
+  }catch(e){
+    // captureStream 실패 시 카메라 직접 fallback
+    compStream=new MediaStream(S.stream?S.stream.getVideoTracks().map(t=>t.clone()):[]);
+  }
+
+  // Audio: AudioContext + 마이크
   try{
     if(_recAudioCtx&&_recAudioCtx.state!=='closed'){
       if(!_recAudioDest) _recAudioDest=_recAudioCtx.createMediaStreamDestination();
@@ -2340,7 +2402,7 @@ async function startRecording(){
           const micGain=_recAudioCtx.createGain();
           micGain.gain.value=2.0;
           micSrc.connect(micGain);micGain.connect(_recAudioDest);
-        }catch(e){console.warn('micSrc 연결 실패:',e);}
+        }catch(e){console.warn('micSrc:',e);}
       }
       if(_recAudioCtx.state==='suspended') _recAudioCtx.resume().catch(()=>{});
       _recAudioDest.stream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t);}catch(e){}});
@@ -2348,17 +2410,13 @@ async function startRecording(){
     if(S.audioStream&&_recAudioDest===null){
       S.audioStream.getAudioTracks().forEach(t=>{try{compStream.addTrack(t.clone());}catch(e){}});
     }
-  }catch(e){
-    console.warn('RecAudio setup 실패:',e);
-    _recAudioCtx=null;_recAudioDest=null;
-  }
+  }catch(e){ console.warn('RecAudio:',e); _recAudioCtx=null; _recAudioDest=null; }
 
-  // MediaRecorder 생성 — iOS는 옵션 없이, 기타는 고화질 설정
-  const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
+  // MediaRecorder
   let mime;
   if(_isIOSCam){
     try{S.recorder=new MediaRecorder(compStream);}
-    catch(e){console.warn('iOS recorder init failed:',e);saveRecording([]);return;}
+    catch(e){console.warn('iOS recorder:',e);saveRecording([]);return;}
     mime=S.recorder.mimeType||'video/mp4';
   }else{
     const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
@@ -2371,12 +2429,10 @@ async function startRecording(){
   const _recIsCam=_srcMode==='camera';
   S.recorder.onstop=()=>{if(_fallbackSaveTimer){clearTimeout(_fallbackSaveTimer);_fallbackSaveTimer=null;}saveRecording(_sessionChunks,_recIsCam?_recWallMs:0);};
 
-  // _drawLoop 없음 — 녹화는 순수 카메라 스트림, GPU 완전 해방
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
-      try{S.recorder.start();}
-      catch(e){console.warn('Recorder start:',e);}
+      try{S.recorder.start();}catch(e){console.warn('Recorder start:',e);}
       _recStartMs=Date.now();
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
@@ -2406,9 +2462,8 @@ function stopRecording(){
   _coachOverlay=null;
   _introUntil=0;
   if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;}
-  if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;} // 호환성 유지
-  if(S.drawCompInterval&&S.drawCompInterval!==1){clearInterval(S.drawCompInterval);}
-  S.drawCompInterval=null;
+  if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
+  if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}
   $('rec-dot').classList.remove('on');$('rec-time').classList.remove('on');
   const _fallbackChunks=S.recChunks;
@@ -2940,8 +2995,8 @@ async function startLive(){
 
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
   _gateState='idle';_gateLastPrimeT=0;_gateWasInZone=false;_gateSpeechSkip=false;_lastRepT=0;_pendingGateFB=null;
+  _gateArmed=false;
   if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
-  // 타이밍 타이머도 동일하게 정리 (timing 상태에서 reset 시)
   resetRepOsc();
   $('rep-num').textContent='0';
   S.live=true;S.lastFB=0;S.lastPr=0;S.goodN=0;S.speak=false;

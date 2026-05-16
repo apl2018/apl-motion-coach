@@ -2294,17 +2294,15 @@ async function startRecording(){
 
   // Start draw loop immediately; delay recorder.start() 200ms so first recorded frame is clean live video
   // (eliminates 0~0.12s black/intro issue at start of saved video)
-  // Use RAF for display-sync drawing (replaces setInterval)
+  // setInterval 방식: iOS에서 TF.js WebGL 추론이 ~100ms 메인스레드 블록킹 후 밀린 콜백이
+  // 한꺼번에 실행되어 captureStream이 더 많은 고유 프레임을 캡처할 수 있음 (rAF보다 FPS 향상)
   _compDrawing=true; // already set above
   _rafFrameCount=0;  // 매 녹화 시작 시 초기화
-  // rAF draw loop: MoveNet await 사이에 실행되어 실제 fps 향상
-  // captureStream(30)이 자동으로 30fps로 제한하므로 60fps로 요청해도 OK
-  (function _rafDraw(){
-    if(!_compDrawing)return;
+  _drawRafId=setInterval(()=>{
+    if(!_compDrawing){clearInterval(_drawRafId);_drawRafId=null;return;}
     drawComp();
     if(S.recorder&&S.recorder.state==='recording') _rafFrameCount++;
-    _drawRafId=requestAnimationFrame(_rafDraw);
-  })();
+  },33); // ~30fps target
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
@@ -2343,7 +2341,7 @@ function stopRecording(){
   _coachOverlay=null;
   _introUntil=0;
   if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;} // cancel delayed start if still pending
-  if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
+  if(_drawRafId){clearInterval(_drawRafId);_drawRafId=null;} // setInterval handle (was rAF)
   if(S.drawCompInterval&&S.drawCompInterval!==1){clearInterval(S.drawCompInterval);}
   S.drawCompInterval=null;
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}
@@ -3754,7 +3752,7 @@ async function init(){
   $('ana-file-input').addEventListener('change',onAnaFileSelected);
   const _shareBtn=$('btn-share');if(_shareBtn)_shareBtn.addEventListener('click',shareRecording);
   const _saveBtn=$('btn-sum-save');
-  if(_saveBtn) _saveBtn.addEventListener('click',()=>shareRecording());
+  if(_saveBtn) _saveBtn.addEventListener('click',()=>requirePremium(()=>shareRecording()));
   $('btn-main').addEventListener('click',()=>{
     if(!S.ready) return;
     if(S.live)stopLive();else startLive();
@@ -3768,7 +3766,7 @@ async function init(){
   $('i-msg').textContent='카메라 시작 중...';
   try{
     const stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
+      video:{facingMode:{ideal:'environment'},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false});
     S.stream=stream;vid.srcObject=stream;
     await new Promise(r=>{vid.onloadedmetadata=r;});
     vid.play();resizeCam();

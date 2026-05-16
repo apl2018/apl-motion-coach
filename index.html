@@ -1367,9 +1367,21 @@ async function _runDetection(){
           }
           if(_gateState==='primed'&&now3-_gateLastPrimeT<_GATE_PRIME_TIMEOUT){
             if(inZone&&!_gateWasInZone){
-              // 기준 자세 구역 Rising-edge: 진입 방향으로 통과 감지 → 피드백 즉시 발화
-              _gateState='idle';S.lastFB=0;S.goodN=0;
-              doFeedback(cmp,true);
+              // 기준 자세 구역 Rising-edge: 진입 방향으로 통과 감지
+              _gateState='idle';
+              // 렙 카운트
+              S.repCount++;
+              $('rep-num').textContent=S.repCount;
+              // 자세 좋아도/나빠도 항상 피드백 (good이면 칭찬, 아니면 교정)
+              const _ov=overall(cmp);
+              if(_ov==='good'){
+                const PR=TX[CL].PRAISE;
+                speak(PR[Math.floor(Math.random()*PR.length)]);
+              } else {
+                const _fb=primaryFB(cmp);
+                if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){speak(_msgs[_fb.st]||_msgs.warn);}}
+              }
+              S.lastFB=now3;S.goodN=0;
             }
           }
           _gateWasInZone=inZone;
@@ -3844,7 +3856,7 @@ async function init(){
         if(vid.paused||vid.readyState<2) checkCameraHealth();
       }
     },3000);
-    $('i-msg').textContent='AI 모델 로딩 중...';
+    $('i-msg').textContent='AI 로딩 중...';
   }catch(e){
     console.error('Camera:',e);
     $('i-msg').textContent='카메라 오류: '+e.message;

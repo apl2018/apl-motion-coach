@@ -111,8 +111,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
   background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0}
 .h-brand{display:flex;align-items:center;gap:10px}
 .h-brand-txt{display:flex;flex-direction:column;line-height:1.1}
-.h-apl{font-size:17px;font-weight:900;color:#fff;letter-spacing:2px}
-.h-mc{font-size:10px;font-weight:600;color:var(--txt2);letter-spacing:0.5px}
+.h-apl{font-size:14px;font-weight:900;color:#fff;letter-spacing:2px}
+.h-mc{font-size:14px;font-weight:600;color:var(--txt2);letter-spacing:0.5px}
 .h-title{font-size:15px;font-weight:700;color:var(--txt);letter-spacing:0.3px}
 #hdr-right{display:flex;align-items:center;gap:8px}
 #mdl-status{display:flex;align-items:center;gap:4px;font-size:9px;color:var(--txt2);line-height:1.15}
@@ -229,7 +229,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #ref-info{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
 #ref-ttl{font-size:13px;font-weight:600}
 #ref-dsc{font-size:11px;color:var(--txt2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ref-btns{display:flex;gap:6px;flex-shrink:0}
+.ref-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+.ref-btns{display:flex;gap:6px}
 #btn-ref-start{padding:8px 10px;border-radius:8px;background:transparent;
   border:1px solid var(--border);color:var(--txt2);font-size:11px;
   cursor:pointer;white-space:nowrap;transition:all .15s}
@@ -243,7 +244,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
 #btn-ref-stop:active{opacity:.6}
 #btn-ref-file{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--txt2);font-size:11px;cursor:pointer;white-space:nowrap;transition:all .15s}
 #btn-ref-file:active{opacity:.6}
-#gate-status{font-size:10px;color:var(--txt3);margin-top:5px;min-height:14px;transition:color .2s;padding-left:2px;letter-spacing:0.2px}
+#gate-status{font-size:10px;color:var(--txt3);min-height:14px;transition:color .2s;letter-spacing:0.2px;text-align:right}
 #gate-status.set{color:#FFA500}
 #src-row{display:flex;gap:8px;margin-top:4px}
 .srctgl{flex:1;padding:7px 4px;border-radius:10px;border:1px solid var(--border);color:var(--txt2);text-align:center;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s;user-select:none;-webkit-user-select:none}
@@ -637,12 +638,14 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         <div id="ref-ttl">기준 자세 없음</div>
         <div id="ref-dsc">기준 자세를 먼저 촬영하면 더 정확한 피드백</div>
       </div>
-      <div class="ref-btns">
-        <button id="btn-ref-start">● 기준 시작</button>
-        <button id="btn-ref-stop">■ 기준 종료</button>
-        <button id="btn-ref-file">📁 파일</button>
+      <div class="ref-right">
+        <div class="ref-btns">
+          <button id="btn-ref-start">● 기준 시작</button>
+          <button id="btn-ref-stop">■ 기준 종료</button>
+          <button id="btn-ref-file">📁 파일</button>
+        </div>
+        <div id="gate-status"></div>
       </div>
-      <div id="gate-status"></div>
     </div>
     <div id="fb-txt"></div>
   </div>
@@ -1132,13 +1135,12 @@ function speak(txt){
   const lc=TX[CL].voice_lang.split('-')[0];
   const kv=_voices.find(v=>v.lang.startsWith(lc));
   if(kv) u.voice=kv;
-  u.onend=u.onerror=()=>{S.speak=false;};
-  // Safety: iOS often misses onend — poll speaking state + hard cap
-  // Korean TTS ~200ms/char; hard cap = 8s max
-  const _spkPoll=setInterval(()=>{
-    if(!speechSynthesis.speaking){S.speak=false;clearInterval(_spkPoll);}
-  },300);
-  setTimeout(()=>{S.speak=false;clearInterval(_spkPoll);},Math.max(txt.length*200,8000));
+  // Safety cap: Korean ~160ms/char at rate 0.92, min 1.5s, max 5s
+  // NOTE: setInterval poll removed — it triggered on brief syllable pauses,
+  //       falsely resetting S.speak mid-utterance → double speak / cutoff repeats
+  const _spkCap=setTimeout(()=>{S.speak=false;},Math.min(Math.max(txt.length*160,1500),5000));
+  u.onend=()=>{S.speak=false;clearTimeout(_spkCap);};
+  u.onerror=()=>{S.speak=false;clearTimeout(_spkCap);};
   speechSynthesis.speak(u);
 }
 
@@ -1381,11 +1383,11 @@ async function _runDetection(){
 
           if(_inGate){
             // 시작 자세 구역 안
-            if(_gateState==='idle'||_gateState==='primed'){
-              // 새로 진입(또는 primed 중 재진입) → entry로 전환
+            // ※ idle 상태일 때만 entry 전환 — primed 중 재진입은 무시
+            //   (스윙 도중 시작 각도와 유사한 자세를 지날 때 primed가 리셋되는 버그 방지)
+            if(_gateState==='idle'){
               _gateState='entry';
             }
-            // entry 중에는 타임아웃 계속 갱신
             _gateLastPrimeT=now3;
           } else {
             // 시작 자세 구역 밖
@@ -1393,8 +1395,9 @@ async function _runDetection(){
               // 방금 시작 자세를 벗어남 → primed (끝 자세 대기)
               _gateState='primed';
               _gateLastPrimeT=now3; // primed 타임아웃 기산
-            }
-            if(_gateState==='primed'){
+            } else if(_gateState==='primed'){
+              // ※ else if — entry→primed 전환과 primed 트리거가 동일 프레임에
+              //   동시 실행되는 버그 방지 (즉각 더블 트리거 원인)
               if(now3-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
                 _gateState='idle'; // 타임아웃: 다시 시작
               } else if(inZone&&!_gateWasInZone&&now3-_lastRepT>=_MIN_REP_MS){

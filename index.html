@@ -1416,19 +1416,17 @@ async function _runDetection(){
                   const _fb=primaryFB(cmp);
                   if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_pendingGateFB=_msgs[_fb.st]||_msgs.warn;}}
                 }
-                // ── 타이머 방식: 끝 자세 도달 후 _GATE_FB_DELAY ms 뒤에 발화 ──
-                // falling-edge(zone 이탈 감지) 대신 고정 딜레이 사용
-                // → ZONE_THRESH가 넓어 어드레스와 피니쉬가 같은 zone으로 인식될 때
-                //   falling-edge가 다음 백스윙 시작에 지연 발화되는 버그를 근본 해결
-                if(_pendingGateFBTimer) clearTimeout(_pendingGateFBTimer);
-                const _fbSnap=_pendingGateFB; // 클로저 캡처
-                _pendingGateFBTimer=setTimeout(()=>{
-                  _pendingGateFBTimer=null;
-                  if(_pendingGateFB===_fbSnap&&_fbSnap){ // 아직 같은 피드백이 대기 중이면
-                    if(!S.speak) speak(_fbSnap);
-                    _pendingGateFB=null;
-                  }
-                },_GATE_FB_DELAY);
+                // ── 타이머 방식: 끝 자세 도달 후 _GATE_FB_DELAY ms 뒤 1회 발화 ──
+                // _pendingGateFB는 로컬 변수로 캡처 → 외부 상태 변경에 무관하게 딱 1회 실행
+                if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
+                if(_pendingGateFB){
+                  const _fbCapture=_pendingGateFB; // 클로저에 값 고정 캡처
+                  _pendingGateFB=null;              // 즉시 소비 → 중복 발화 원천 차단
+                  _pendingGateFBTimer=setTimeout(()=>{
+                    _pendingGateFBTimer=null;
+                    if(!S.speak) speak(_fbCapture);
+                  },_GATE_FB_DELAY);
+                }
               }
             }
           }
@@ -1874,10 +1872,10 @@ let _gateLastPrimeT = 0;    // primed 상태가 마지막으로 갱신된 시각
 let _gateWasInZone = false; // 이전 프레임에서 기준 자세 구역 안에 있었는지
 let _gateSpeechSkip = false; // 음성 재생 중 게이트 트리거 → 다음 1회 피드백 스킵
 let _lastRepT = 0;          // 마지막 렙 인정 시각 (이중 트리거 방지)
-const _MIN_REP_MS = 800;    // 연속 렙 최소 간격 ms
+const _MIN_REP_MS = 1500;   // 연속 렙 최소 간격 ms (같은 스윙 내 이중 트리거 방지)
 let _pendingGateFB = null;  // 렙 카운트 후 발화 대기 피드백
 let _pendingGateFBTimer = null; // 피드백 발화 타이머 (zone 이탈 대신 고정 딜레이)
-const _GATE_FB_DELAY = 700; // 끝 자세 도달 후 피드백까지 딜레이 ms
+const _GATE_FB_DELAY = 300; // 끝 자세 도달 후 피드백까지 딜레이 ms
 // ※ falling-edge 방식 제거 이유: ZONE_THRESH=45°가 넓어 어드레스→피니쉬 내내 inZone=true
 //   유지되는 경우 falling-edge가 다음 백스윙 시작까지 지연돼 "어드레스에서 피드백" 현상 발생
 const _GATE_ENTRY_THR = 40; // 진입 자세 인식 임계값 (평균 편차 °)
@@ -2572,7 +2570,7 @@ async function patchMP4Timestamps(blob,wallMs){
           const corrDur=Math.round(meta.ts*wallSec/n);
           // Only use if corrected fps is in reasonable range (8~120fps)
           const corrFps=meta.ts/corrDur;
-          if(corrFps>=8&&corrFps<=120) wallCorrDur[id]=corrDur;
+          if(corrFps>=3&&corrFps<=120) wallCorrDur[id]=corrDur; // 3fps 이상이면 wall-clock 보정 적용
           console.log(`[patchMP4] t${id} video: ${n}samples ${wallSec.toFixed(2)}s → corrDur=${corrDur}(${corrFps.toFixed(1)}fps)`);
         }
       }

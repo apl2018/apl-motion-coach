@@ -1357,35 +1357,53 @@ async function _runDetection(){
       } else if(cmp){
         const gRef=_gateEntryRef[S.ex.id];
         if(gRef){
-          // 방향 게이트 모드: 진입 자세 통과 후 기준 구역 진입 시에만 피드백
+          // ── 방향 게이트 상태머신 ──────────────────────────────────────────
+          // idle  → (시작 자세 진입)  → entry
+          // entry → (시작 자세 이탈)  → primed  (끝 자세 대기 시작)
+          // primed→ (끝 자세 rising-edge) → 렙+피드백 → idle
+          // primed→ (타임아웃)         → idle
+          // ─────────────────────────────────────────────────────────────────
           const devToGate=getAvgDev(angles,gRef);
           const now3=Date.now();
-          if(devToGate!=null&&devToGate<=_GATE_ENTRY_THR){
-            // 진입 자세 감지 → primed 상태 유지 및 타임스탬프 갱신
-            _gateState='primed';_gateLastPrimeT=now3;
-          }
-          if(_gateState==='primed'&&now3-_gateLastPrimeT<_GATE_PRIME_TIMEOUT){
-            if(inZone&&!_gateWasInZone){
-              // 기준 자세 구역 Rising-edge: 진입 방향으로 통과 감지
-              _gateState='idle';
-              // 렙 카운트
-              S.repCount++;
-              $('rep-num').textContent=S.repCount;
-              S.lastFB=now3;S.goodN=0;
-              // 음성 겹침 방지: 재생 중이면 이 트리거 스킵, 다음 트리거에서 피드백
-              const _isSpeaking=S.speak||(window.speechSynthesis&&speechSynthesis.speaking);
-              if(_isSpeaking){
-                _gateSpeechSkip=true; // 현재 음성 완료될 때까지 대기, 이번 트리거 스킵
-              } else {
-                _gateSpeechSkip=false;
-                // 피드백: good이면 짧은 칭찬, 아니면 교정
-                const _ov=overall(cmp);
-                if(_ov==='good'){
-                  const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];
-                  speak(_gp[Math.floor(Math.random()*_gp.length)]);
+          const _inGate=devToGate!=null&&devToGate<=_GATE_ENTRY_THR;
+
+          if(_inGate){
+            // 시작 자세 구역 안
+            if(_gateState==='idle'||_gateState==='primed'){
+              // 새로 진입(또는 primed 중 재진입) → entry로 전환
+              _gateState='entry';
+            }
+            // entry 중에는 타임아웃 계속 갱신
+            _gateLastPrimeT=now3;
+          } else {
+            // 시작 자세 구역 밖
+            if(_gateState==='entry'){
+              // 방금 시작 자세를 벗어남 → primed (끝 자세 대기)
+              _gateState='primed';
+              _gateLastPrimeT=now3; // primed 타임아웃 기산
+            }
+            if(_gateState==='primed'){
+              if(now3-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
+                _gateState='idle'; // 타임아웃: 다시 시작
+              } else if(inZone&&!_gateWasInZone){
+                // 끝 자세 구역 rising-edge → 렙 인정 및 피드백
+                _gateState='idle';
+                S.repCount++;
+                $('rep-num').textContent=S.repCount;
+                S.lastFB=now3;S.goodN=0;
+                const _isSpeaking=S.speak||(window.speechSynthesis&&speechSynthesis.speaking);
+                if(_isSpeaking){
+                  _gateSpeechSkip=true;
                 } else {
-                  const _fb=primaryFB(cmp);
-                  if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){speak(_msgs[_fb.st]||_msgs.warn);}}
+                  _gateSpeechSkip=false;
+                  const _ov=overall(cmp);
+                  if(_ov==='good'){
+                    const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];
+                    speak(_gp[Math.floor(Math.random()*_gp.length)]);
+                  } else {
+                    const _fb=primaryFB(cmp);
+                    if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){speak(_msgs[_fb.st]||_msgs.warn);}}
+                  }
                 }
               }
             }

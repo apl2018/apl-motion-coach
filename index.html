@@ -571,6 +571,11 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div id="rec-time"></div>
     <div id="rep-badge"><div id="rep-num">0</div><div id="rep-lbl">회</div></div>
     <div id="zone-badge" class="out">범위 밖</div>
+    <!-- [FIX-1] 정면 분석 좌우 수동 선택 -->
+    <div id="front-flip-btns" style="display:none;position:absolute;bottom:62px;left:0;right:0;pointer-events:none">
+      <button id="front-flip-l" style="pointer-events:all;position:absolute;left:10px;padding:8px 16px;background:rgba(0,0,0,.65);color:#fff;border:1.5px solid rgba(255,255,255,.35);border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">← 좌</button>
+      <button id="front-flip-r" style="pointer-events:all;position:absolute;right:10px;padding:8px 16px;background:rgba(33,150,243,.75);color:#fff;border:1.5px solid #2196F3;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">우 →</button>
+    </div>
   </div>
 
   <!-- Summary Modal -->
@@ -1011,6 +1016,7 @@ const S={
   inZone:false,repCount:0,startTime:0,stats:null,fbLog:{},
   jointSel:{knee:true,hip:true,trunk:true,spine:true,shoulder:true,elbow:true},
   premium:false,
+  frontFlip:false,  // [FIX-1] 정면 분석 좌우 반전 여부
 };
 function freshStats(){
   return{zoneFrames:0,totalFrames:0,
@@ -1714,7 +1720,7 @@ async function saveRefFrame(){
   const angles=extractAngles(kps);
   if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
   S.refs[S.ex.id]=angles;
-  try{localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));}catch(e){}
+  try{localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({v:2,angles,dir:S.dir,at:new Date().toISOString()}));}catch(e){}
   // 세그먼트 시간 계산: |끝 프레임 타임 - 시작 프레임 타임| × 1000 ms
   {
     const _fpVidEl2=$('fp-vid');
@@ -2460,6 +2466,13 @@ async function startRecording(){
 
   function drawComp(){
     if(!_compDrawing) return;
+    // [FIX-3] 파일 모드: 비디오 종료 즉시 캔버스 드로우 중단 → 저장영상 2배 길이 버그 근본 수정
+    if(_srcMode==='file'&&(vid.ended||(vid.duration>0&&vid.currentTime>=vid.duration-0.05))){
+      _compDrawing=false;
+      if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
+      setTimeout(()=>{ if(S.live) stopLive(); else if(S.recorder&&S.recorder.state==='recording') stopRecording(); },50);
+      return;
+    }
     try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
     // 스켈레톤 오버레이: 캐시된 _lastKps 사용 (TF.js 직접 호출 없음)
     // _prevKps/_lastKps 보간으로 TF.js 업데이트(~15fps) 사이에도 부드럽게 표시
@@ -2983,7 +2996,7 @@ function onRefFileSelected(e){
           const exId=data.exercise||S.ex.id;
           S.refs[exId]=data.angles;
           if(data.dir) S.dir=data.dir;
-          localStorage.setItem('apl_ref_'+exId,JSON.stringify({angles:data.angles,dir:data.dir,at:new Date().toISOString()}));
+          localStorage.setItem('apl_ref_'+exId,JSON.stringify({v:2,angles:data.angles,dir:data.dir,at:new Date().toISOString()}));
           speak(TX[CL].voice_ref_saved);
           updateRefUI();updateExChips();
           $('btn-main').disabled=false;
@@ -3029,7 +3042,7 @@ async function _processImgRef(athleteName){
     const angles=extractAngles(kps);
     if(angles.knee===null&&angles.hip===null){speak(TX[CL].voice_ref_full);return;}
     S.refs[S.ex.id]=angles;
-    localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({angles,dir:S.dir,at:new Date().toISOString()}));
+    localStorage.setItem('apl_ref_'+S.ex.id,JSON.stringify({v:2,angles,dir:S.dir,at:new Date().toISOString()}));
     const _imgThumb=_captureThumbnail(img);
     saveRefLog(angles,athleteName,_imgThumb);
     const succ=$('succ');succ.classList.add('on');
@@ -3165,10 +3178,12 @@ async function startLive(){
     const tw=$('traj-wrap'); if(tw) tw.classList.add('on');
     const tc=$('traj-cvs');
     if(tc&&tc.offsetWidth) tc.width=tc.offsetWidth;
+    if(typeof _updateFrontFlipBtns==='function') _updateFrontFlipBtns(); // [FIX-1]
   } else {
     $('abar').classList.add('on');
     $('pos-bar').classList.remove('on');
     const tw=$('traj-wrap'); if(tw) tw.classList.remove('on');
+    const _fb=$('front-flip-btns');if(_fb) _fb.style.display='none'; // [FIX-1]
   }
   // (zone-entry globals removed — using simple time-based feedback)
   $('rep-badge').classList.add('on');
@@ -3213,6 +3228,7 @@ function stopLive(){
   $('btn-main').className='start';$('btn-main').textContent=TX[CL].btn_start;
   $('abar').classList.remove('on');$('pos-bar').classList.remove('on');
   const _tw=$('traj-wrap');if(_tw)_tw.classList.remove('on');
+  const _fb2=$('front-flip-btns');if(_fb2) _fb2.style.display='none'; // [FIX-1]
   _lastPos=null;_lastPosCmp=null;
   $('chip').className='';
   $('no-det').classList.remove('on');$('no-ref').classList.remove('on');
@@ -3714,21 +3730,28 @@ function posAbsFeedback(pos){
   if(!pos) return null;
   const ABS={shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:20, lKneeOff:22, rKneeOff:22};
   const sel=k=>S.jointSel[POS_JOINT_MAP[k]!==undefined?POS_JOINT_MAP[k]:k]!==false;
-  // ① 골반 좌우 위치(hipShift) 최우선 — 기울기(hipTilt)보다 먼저 확인
-  if(sel('hipShift')&&pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift)
-    return pos.hipShift>0?'골반 왼쪽으로!':'골반 오른쪽으로!';
-  // ② 나머지 지표 (hipShift 정상일 때만 hipTilt 등 확인)
+  const _xFlip=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1); // [FIX-1] 좌우 보정
+  // ① 골반 좌우 위치(hipShift) 최우선
+  if(sel('hipShift')&&pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift){
+    const _d=pos.hipShift*_xFlip;
+    return _d>0?'골반 왼쪽으로!':'골반 오른쪽으로!';
+  }
+  // ② 나머지 지표
   const msgs=[];
   if(sel('shoulderTilt')&&pos.shoulderTilt!=null&&Math.abs(pos.shoulderTilt)>ABS.shoulderTilt)
-    msgs.push({text:pos.shoulderTilt>0?'오른쪽 어깨 올려':'왼쪽 어깨 올려',v:Math.abs(pos.shoulderTilt)});
+    msgs.push({text:pos.shoulderTilt*_xFlip>0?'오른쪽 어깨 올려':'왼쪽 어깨 올려',v:Math.abs(pos.shoulderTilt)});
   if(sel('hipTilt')&&pos.hipTilt!=null&&Math.abs(pos.hipTilt)>ABS.hipTilt)
-    msgs.push({text:pos.hipTilt>0?'오른쪽골반 떨어졌어':'왼쪽골반 떨어졌어',v:Math.abs(pos.hipTilt)});
+    msgs.push({text:pos.hipTilt*_xFlip>0?'오른쪽골반 떨어졌어':'왼쪽골반 떨어졌어',v:Math.abs(pos.hipTilt)});
   if(sel('trunkLean')&&pos.trunkLean!=null&&Math.abs(pos.trunkLean)>ABS.trunkLean)
-    msgs.push({text:pos.trunkLean>0?'상체 왼쪽으로 세워':'상체 오른쪽으로 세워',v:Math.abs(pos.trunkLean)});
-  if(sel('lKneeOff')&&pos.lKneeOff!=null&&Math.abs(pos.lKneeOff)>ABS.lKneeOff)
-    msgs.push({text:pos.lKneeOff<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로',v:Math.abs(pos.lKneeOff)});
-  if(sel('rKneeOff')&&pos.rKneeOff!=null&&Math.abs(pos.rKneeOff)>ABS.rKneeOff)
-    msgs.push({text:pos.rKneeOff>0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로',v:Math.abs(pos.rKneeOff)});
+    msgs.push({text:pos.trunkLean*_xFlip>0?'상체 왼쪽으로 세워':'상체 오른쪽으로 세워',v:Math.abs(pos.trunkLean)});
+  if(sel('lKneeOff')&&pos.lKneeOff!=null&&Math.abs(pos.lKneeOff)>ABS.lKneeOff){
+    const _lk=pos.lKneeOff*(-_xFlip);
+    msgs.push({text:_lk<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로',v:Math.abs(pos.lKneeOff)});
+  }
+  if(sel('rKneeOff')&&pos.rKneeOff!=null&&Math.abs(pos.rKneeOff)>ABS.rKneeOff){
+    const _rk=pos.rKneeOff*_xFlip;
+    msgs.push({text:_rk<0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로',v:Math.abs(pos.rKneeOff)});
+  }
   if(!msgs.length) return null;
   return msgs.sort((a,b)=>b.v-a.v)[0].text;
 }
@@ -3741,7 +3764,8 @@ function posAllGood(cmp){
 
 function posFeedbackStr(cmp){
   if(!cmp) return null;
-  const xFlip = S.dir==='back' ? 1 : -1;
+  // [FIX-1] 카메라 방향 보정: back=그대로, front=반전, frontFlip=수동 반전
+  const xFlip = (S.dir==='back' ? 1 : -1) * (S.frontFlip ? -1 : 1);
   const sel = k => S.jointSel[POS_JOINT_MAP[k]]!==false;
   const {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff} = cmp;
   // ① 골반 좌우 위치(hipShift) 최우선 — 기울기(hipTilt)보다 먼저 확인
@@ -3918,46 +3942,304 @@ function drawPosOverlay(kps, pos){
     ctx.setLineDash([6,4]);
     ctx.beginPath(); ctx.moveTo(mSh.x,mSh.y); ctx.lineTo(mHip.x,mHip.y);
     ctx.strokeStyle=trunkCol; ctx.lineWidth=2.5; ctx.stroke();
-    ctx.setLineDash([]);
-    // 중점에 원
+    ctx.setLineDash([    // 중점에 원
     const mid={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
-    ctx.beginPath();ctx.arc(mid.x,mid.y,4,0,Math.PI*2);
-    ctx.fillStyle=trunkCol;ctx.fill();
-    // 몸통기울기 값 표시 (trunkLean은 화면 x 기준 → 정면 촬영 시 신체 좌우 반전 보정)
+    ctx.beginPath();ctx.arc(mid.x,mid.y,5,0,Math.PI*2);ctx.fillStyle=trunkCol;ctx.fill();
     if(pos.trunkLean!=null){
       const _xf=S.dir==='back'?1:-1;
       const dv=pos.trunkLean*_xf,side=dv>0?'우 ':'좌 ';
-      const t=side+Math.abs(pos.trunkLean)+'°';
-      ctx.font='bold 12px -apple-system,sans-serif';
-      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3;
-      ctx.strokeText(t,mid.x+8,mid.y-2);
-      ctx.fillStyle=trunkCol;ctx.fillText(t,mid.x+8,mid.y-2);
+      ctx.font='bold 18px -apple-system,sans-serif';
+      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;ctx.textAlign='left';
+      ctx.strokeText(side+Math.abs(pos.trunkLean)+'°',mid.x+10,mid.y-4);
+      ctx.fillStyle=trunkCol;
+      ctx.fillText(side+Math.abs(pos.trunkLean)+'°',mid.x+10,mid.y-4);
     }
     ctx.restore();
   }
-
-  // ── ④ 골반 수평 이동 기준선 (골반 중점 → 발목 중점) ────────────────────────
+  // ④ 골반 수평이동 기준선 (hip midpoint → ankle midpoint)
   if(ok(lHip)&&ok(rHip)&&ok(lAnk)&&ok(rAnk)){
-    const mh = coverXY({x:(lHip.x+rHip.x)/2, y:(lHip.y+rHip.y)/2, score:1});
-    const ma = coverXY({x:(lAnk.x+rAnk.x)/2, y:(lAnk.y+rAnk.y)/2, score:1});
-    ctx.save();
-    ctx.setLineDash([4,4]);
-    ctx.beginPath(); ctx.moveTo(mh.x,mh.y); ctx.lineTo(ma.x,ma.y);
-    ctx.strokeStyle='rgba(33,150,243,.55)'; ctx.lineWidth=1.8; ctx.stroke();
-    ctx.setLineDash([]);
+    const mh=coverXY({x:(lHip.x+rHip.x)/2,y:(lHip.y+rHip.y)/2,score:1});
+    const ma=coverXY({x:(lAnk.x+rAnk.x)/2,y:(lAnk.y+rAnk.y)/2,score:1});
+    ctx.save();ctx.setLineDash([5,5]);
+    ctx.beginPath();ctx.moveTo(mh.x,mh.y);ctx.lineTo(ma.x,ma.y);
+    ctx.strokeStyle='rgba(33,150,243,.5)';ctx.lineWidth=2;ctx.stroke();ctx.setLineDash([]);
     if(pos.hipShift!=null){
       const hs=(pos.hipShift>0?'+':'')+pos.hipShift;
-      ctx.font='bold 12px -apple-system,sans-serif';
-      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3;
-      ctx.strokeText(hs,mh.x+10,mh.y+20);
-      ctx.fillStyle=posCol('hipShift');ctx.fillText(hs,mh.x+10,mh.y+20);
+      const hsc=posCol('hipShift');
+      ctx.font='bold 18px -apple-system,sans-serif';ctx.textAlign='left';
+      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
+      ctx.strokeText(hs,mh.x+10,mh.y+20);ctx.fillStyle=hsc;ctx.fillText(hs,mh.x+10,mh.y+20);
     }
     ctx.restore();
+  }
+  // ⑤ 무릎 편차선 (무릎 vs 힙-발목 직선)
+  function kneeLine(hip,knee,ank){
+    if(!ok(hip)||!ok(knee)||!ok(ank)) return;
+    const dy=hip.y-ank.y;if(Math.abs(dy)<0.02) return;
+    const t=(knee.y-ank.y)/dy;
+    const expX=ank.x+t*(hip.x-ank.x);
+    const expP=coverXY({x:expX,y:knee.y,score:1}),kneeP=coverXY(knee);
+    const dist=Math.abs(kneeP.x-expP.x);
+    if(dist<4) return;
+    ctx.save();ctx.beginPath();ctx.moveTo(expP.x,expP.y);ctx.lineTo(kneeP.x,kneeP.y);
+    ctx.strokeStyle=dist>18?'rgba(244,67,54,.85)':'rgba(255,193,7,.85)';
+    ctx.lineWidth=3;ctx.lineCap='round';ctx.stroke();ctx.restore();
+  }
+  kneeLine(lHip,lKnee,lAnk);
+  kneeLine(rHip,rKnee,rAnk);
+  // ⑥ 관절 레이블 (어깨/골반/무릎 수치)
+  ctx.textAlign='left';
+  if(ok(lSh)&&ok(rSh)&&pos.shoulderTilt!=null){
+    const mSh2=coverXY({x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2,score:1});
+    const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓',t=side+Math.abs(v)+'°';
+    const sc=posCol('shoulderTilt');
+    ctx.font='bold 18px -apple-system,sans-serif';
+    ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
+    ctx.strokeText(t,mSh2.x-50,mSh2.y-10);ctx.fillStyle=sc;ctx.fillText(t,mSh2.x-50,mSh2.y-10);
+  }
+  if(ok(lHip)&&ok(rHip)&&pos.hipTilt!=null){
+    const mHip2=coverXY({x:(lHip.x+rHip.x)/2,y:(lHip.y+rHip.y)/2,score:1});
+    const v=pos.hipTilt,side=v>0?'우↓':'좌↓',t=side+Math.abs(v)+'°';
+    const hc=posCol('hipTilt');
+    ctx.font='bold 18px -apple-system,sans-serif';
+    ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
+    ctx.strokeText(t,mHip2.x-50,mHip2.y-8);ctx.fillStyle=hc;ctx.fillText(t,mHip2.x-50,mHip2.y-8);
+  }
+  if(ok(lKnee)&&pos.lKneeOff!=null){
+    const p=coverXY(lKnee),v=pos.lKneeOff,t=(v>0?'+':'')+v;
+    const lkc=posCol('lKneeOff');
+    ctx.font='bold 18px -apple-system,sans-serif';
+    ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
+    ctx.strokeText(t,p.x-46,p.y-6);ctx.fillStyle=lkc;ctx.fillText(t,p.x-46,p.y-6);
+  }
+  if(ok(rKnee)&&pos.rKneeOff!=null){
+    const p=coverXY(rKnee),v=pos.rKneeOff,t=(v>0?'+':'')+v;
+    const rkc=posCol('rKneeOff');
+    ctx.font='bold 18px -apple-system,sans-serif';
+    ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
+    ctx.strokeText(t,p.x+8,p.y-6);ctx.fillStyle=rkc;ctx.fillText(t,p.x+8,p.y-6);
   }
 }
 
-// ── MODEL LOADER ─────────────────────────────────────────────────────────────
-async function loadModel(){
+// ── [FIX-1] 정면 좌우 방향 버튼 업데이트 (전역 함수) ────────────────────────
+function _updateFrontFlipBtns(){
+  const fbDiv=$('front-flip-btns');if(!fbDiv) return;
+  const lBtn=$('front-flip-l'),rBtn=$('front-flip-r');
+  if(lBtn){
+    lBtn.style.background=S.frontFlip?'rgba(33,150,243,.75)':'rgba(0,0,0,.65)';
+    lBtn.style.borderColor=S.frontFlip?'#2196F3':'rgba(255,255,255,.35)';
+  }
+  if(rBtn){
+    rBtn.style.background=!S.frontFlip?'rgba(33,150,243,.75)':'rgba(0,0,0,.65)';
+    rBtn.style.borderColor=!S.frontFlip?'#2196F3':'rgba(255,255,255,.35)';
+  }
+  fbDiv.style.display=isFrontal()?'block':'none';
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+async function init(){
+  setAppHeight();
+  for(const ex of EXERCISES){
+    try{const n=localStorage.getItem('apl_exname_'+ex.id);if(n)ex.name=n;}catch(e){}
+    try{
+      const raw=localStorage.getItem('apl_ref_'+ex.id);
+      if(raw){
+        const d=JSON.parse(raw);
+        // [FIX-2] 구버전 기준자세(v 필드 없음) 자동 변환: 180-값 적용
+        let a=d.angles;
+        if(a&&!d.v){
+          a={...a,knee:a.knee!=null?180-a.knee:null,hip:a.hip!=null?180-a.hip:null};
+        }
+        S.refs[ex.id]=a;
+      }
+    }catch(e){}
+    try{
+      const praw=localStorage.getItem('apl_posref_'+ex.id);
+      if(praw){const pd=JSON.parse(praw);_posRef[ex.id]=pd.pos;}
+    }catch(e){}
+  }
+  buildExChips();updateRefUI();
+
+  document.querySelectorAll('.dirbtn').forEach(b=>{
+    b.addEventListener('click',()=>{
+      if(S.live||S.caps) return;
+      document.querySelectorAll('.dirbtn').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');S.dir=b.dataset.d;
+      _updateFrontFlipBtns(); // [FIX-1]
+    });
+  });
+  // [FIX-1] 정면 좌우 수동 선택 버튼
+  $('front-flip-l').addEventListener('click',()=>{S.frontFlip=true;_updateFrontFlipBtns();});
+  $('front-flip-r').addEventListener('click',()=>{S.frontFlip=false;_updateFrontFlipBtns();});
+  _updateFrontFlipBtns();
+  $('rename-cancel').addEventListener('click',closeRenameModal);
+  $('rename-confirm').addEventListener('click',confirmRename);
+  $('rename-input').addEventListener('keydown',e=>{if(e.key==='Enter')confirmRename();if(e.key==='Escape')closeRenameModal();});
+  $('rename-modal').addEventListener('click',e=>{if(e.target===$('rename-modal'))closeRenameModal();});
+  $('btn-ref-start').addEventListener('click',startRefRecording);
+  $('btn-ref-file').addEventListener('click',openRefFileUpload);
+  $('ref-file-input').addEventListener('change',onRefFileSelected);
+  $('fp-photo').addEventListener('click',saveFpPhoto);
+  $('fp-gate-save').addEventListener('click',saveGateFrame);
+  $('btn-data-open').addEventListener('click',openDataModal);
+  $('btn-data-close').addEventListener('click',closeDataModal);
+  $('btn-data-copy-all').addEventListener('click',copyAllData);
+  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
+    const lbl=$('jsel-'+k);if(!lbl) continue;
+    const cb=lbl.querySelector('input');
+    cb.addEventListener('change',()=>{
+      const nowChecked=cb.checked;
+      const otherSel=['knee','hip','trunk','spine','shoulder','elbow'].filter(j=>j!==k&&S.jointSel[j]);
+      if(!nowChecked&&!otherSel.length){cb.checked=true;return;}
+      S.jointSel[k]=nowChecked;
+      lbl.classList.toggle('active',nowChecked);
+    });
+  }
+  const _prmBadge=$('prm-badge');
+  if(_prmBadge) _prmBadge.addEventListener('click',()=>{
+    if(S.premium){
+      if(confirm('Lock premium? You will need the password to unlock again.')){
+        _setPremium(false);try{localStorage.removeItem('apl_premium');}catch(e){}
+      }
+    }else{requirePremium(()=>{});}
+  });
+  const _prmConfirm=$('prm-confirm');if(_prmConfirm)_prmConfirm.addEventListener('click',_tryUnlock);
+  const _prmCancel=$('prm-cancel');if(_prmCancel)_prmCancel.addEventListener('click',()=>{
+    $('prm-modal').classList.remove('on');_pendingPremiumCb=null;
+  });
+  const _prmInput=$('prm-input');if(_prmInput)_prmInput.addEventListener('keydown',e=>{
+    if(e.key==='Enter')_tryUnlock();
+    if(e.key==='Escape'){$('prm-modal').classList.remove('on');_pendingPremiumCb=null;}
+  });
+  if(_hasPremiumStored())_setPremium(true);
+  $('data-search').addEventListener('input',e=>renderDataList(e.target.value));
+  $('data-modal').addEventListener('click',e=>{if(e.target===$('data-modal'))closeDataModal();});
+  $('btn-data-del-all').addEventListener('click',deleteAllData);
+  $('img-name-confirm').addEventListener('click',()=>{
+    const name=$('img-name-input').value.trim();
+    if(!name){$('img-name-input').classList.add('required');$('img-name-input').focus();
+      setTimeout(()=>$('img-name-input').classList.remove('required'),600);return;}
+    _processImgRef(name);
+  });
+  $('img-name-cancel').addEventListener('click',()=>{
+    $('img-name-modal').classList.remove('on');_pendingImgFile=null;
+  });
+  $('img-name-input').addEventListener('keydown',e=>{
+    if(e.key==='Enter'){$('img-name-confirm').click();}
+    if(e.key==='Escape'){$('img-name-cancel').click();}
+  });
+  $('ana-file-input').addEventListener('change',onAnaFileSelected);
+  $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));
+  $('src-file-btn').addEventListener('click',()=>switchSrcMode('file'));
+  $('btn-ref-stop').addEventListener('click',stopRefRecording);
+  $('fp-close').addEventListener('click',closeFramePicker);
+  $('fp-save').addEventListener('click',saveRefFrame);
+  $('fp-prev').addEventListener('click',()=>{
+    const fpv=$('fp-vid');fpv.currentTime=Math.max(0,fpv.currentTime-1/30);
+  });
+  $('fp-next').addEventListener('click',()=>{
+    const fpv=$('fp-vid');fpv.currentTime=Math.min(fpv.duration||999,fpv.currentTime+1/30);
+  });
+  $('fp-scrub').addEventListener('input',()=>{
+    const fpv=$('fp-vid'),dur=fpv.duration||1,max=parseInt($('fp-scrub').max)||1000;
+    fpv.currentTime=(parseInt($('fp-scrub').value)/max)*dur;
+  });
+  $('fp-vid').addEventListener('seeked',()=>{
+    _updateFpTime();_scheduleDetect();
+    const fpv=$('fp-vid'),dur=fpv.duration||1,max=parseInt($('fp-scrub').max)||1000;
+    $('fp-scrub').value=Math.round((fpv.currentTime/dur)*max);
+  });
+  $('btn-lang').addEventListener('click',(e)=>{
+    e.stopPropagation();$('lang-picker').classList.toggle('on');
+  });
+  document.querySelectorAll('.lpopt').forEach(el=>{
+    el.addEventListener('click',()=>{CL=el.dataset.lang;$('lang-picker').classList.remove('on');applyLang();});
+  });
+  document.addEventListener('click',()=>$('lang-picker').classList.remove('on'));
+  $('btn-main').addEventListener('click',()=>{
+    if(!S.ready) return;
+    if(S.live)stopLive();else startLive();
+  });
+  $('btn-flip-hdr').addEventListener('click',switchCamera);
+  $('btn-sum-close').addEventListener('click',()=>{
+    $('summary').classList.remove('on');
+    const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';
+    _pendingSaveBlob=null;_pendingSaveName='';
+    setTimeout(()=>{
+      if(_srcMode==='camera'){_forceCameraRestart();}
+      else if(vid.readyState<2||vid.videoWidth===0) restartCamera();
+    },400);
+  });
+  $('btn-sum-save').addEventListener('click',()=>{
+    if(!_pendingSaveBlob) return;
+    const blob=_pendingSaveBlob, fname=_pendingSaveName;
+    const file=new File([blob],fname,{type:blob.type,lastModified:Date.now()});
+    const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const _clearSave=()=>{
+      _pendingSaveBlob=null;_pendingSaveName='';
+      const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';
+    };
+    if(isIOS){
+      if(navigator.share){
+        navigator.share({files:[file],title:'APL Motion Coach',text:fname})
+          .then(_clearSave)
+          .catch(err=>{
+            if(err.name==='AbortError') return;
+            const u=URL.createObjectURL(blob);window.open(u,'_blank');
+            setTimeout(()=>URL.revokeObjectURL(u),60000);
+            alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
+            _clearSave();
+          });
+      } else {
+        const u=URL.createObjectURL(blob);window.open(u,'_blank');
+        setTimeout(()=>URL.revokeObjectURL(u),60000);
+        alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
+        _clearSave();
+      }
+    } else if(navigator.canShare&&navigator.canShare({files:[file]})){
+      navigator.share({files:[file],title:'APL Motion Coach',text:fname})
+        .then(_clearSave)
+        .catch(err=>{if(err.name!=='AbortError'){downloadVideo(blob,fname);_clearSave();}});
+    } else {
+      downloadVideo(blob,fname);_clearSave();
+    }
+  });
+
+  $('i-msg').textContent='카메라 시작 중...';
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:'environment'},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false});
+    S.stream=stream;vid.srcObject=stream;
+    await new Promise(r=>{vid.onloadedmetadata=r;});
+    vid.play();resizeCam();setAppHeight();
+    window.addEventListener('resize',()=>{setAppHeight();resizeCam();});
+    vid.addEventListener('loadeddata',resizeCam);
+    document.addEventListener('visibilitychange',()=>{
+      if(document.visibilityState==='visible'){
+        setAppHeight();
+        if(_srcMode==='camera'&&!S.live&&!S.caps){
+          setTimeout(restartCamera,800);
+          setTimeout(()=>{if(!S.live&&!S.caps&&(vid.paused||vid.readyState<2))restartCamera();},2000);
+        } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{if(vid.readyState<2)restartCamera();},300);
+      }
+    });
+    window.addEventListener('pageshow',e=>{
+      if(e.persisted&&_srcMode==='camera'&&!S.live&&!S.caps) setTimeout(restartCamera,500);
+    });
+    vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera')checkCameraHealth();});
+    vid.addEventListener('ended',()=>{if(_srcMode==='camera')checkCameraHealth();});
+    setInterval(()=>{
+      if(!S.live&&!S.caps&&document.visibilityState==='visible'&&_srcMode==='camera'){
+        if(vid.paused||vid.readyState<2)checkCameraHealth();
+      }
+    },3000);
+    $('cam-wrap').addEventListener('touchstart',fixIOSAudioRouting,{once:true});
+  }catch(e){
+    console.error('Camera:',e);
+    $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';
+  }
+
+  $('mdl-txt').textContent=TX[CL].mdl_loading||'로딩 중';
   try{
     S.det=await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
@@ -3978,147 +4260,9 @@ async function loadModel(){
     rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
     document.body.appendChild(rb);
   }
+  speechSynthesis.getVoices();
 }
 
-// ── INIT ─────────────────────────────────────────────────────────────────────
-async function init(){
-  setAppHeight(); // viewport 높이 즉시 보정
-  for(const ex of EXERCISES){
-    // Load custom exercise name (long-press rename)
-    try{const n=localStorage.getItem('apl_exname_'+ex.id);if(n)ex.name=n;}catch(e){}
-    try{
-      const raw=localStorage.getItem('apl_ref_'+ex.id);
-      if(raw){const d=JSON.parse(raw);S.refs[ex.id]=d.angles;}
-    }catch(e){}
-    try{
-      const praw=localStorage.getItem('apl_posref_'+ex.id);
-      if(praw){const pd=JSON.parse(praw);_posRef[ex.id]=pd.pos;}
-    }catch(e){}
-    try{
-      const graw=localStorage.getItem('apl_gate_'+ex.id);
-      if(graw){_gateEntryRef[ex.id]=JSON.parse(graw);}
-      const _gseg=localStorage.getItem('apl_gate_seg_'+ex.id);
-      if(_gseg){_gateSegmentMs[ex.id]=parseInt(_gseg,10);}
-      const _gst=localStorage.getItem('apl_gate_start_t_'+ex.id);
-      if(_gst){_gateStartVideoT[ex.id]=parseFloat(_gst);}
-      const _get=localStorage.getItem('apl_gate_end_t_'+ex.id);
-      if(_get){_gateEndVideoT[ex.id]=parseFloat(_get);}
-    }catch(e){}
-  }
-  buildExChips();updateRefUI();
-
-  document.querySelectorAll('.dirbtn').forEach(b=>{
-    b.addEventListener('click',()=>{
-      if(S.live||S.caps) return;
-      document.querySelectorAll('.dirbtn').forEach(x=>x.classList.remove('on'));
-      b.classList.add('on');S.dir=b.dataset.d;
-    });
-  });
-  $('rename-cancel').addEventListener('click',closeRenameModal);
-  $('rename-confirm').addEventListener('click',confirmRename);
-  $('rename-input').addEventListener('keydown',e=>{if(e.key==='Enter')confirmRename();if(e.key==='Escape')closeRenameModal();});
-  $('rename-modal').addEventListener('click',e=>{if(e.target===$('rename-modal'))closeRenameModal();});
-  $('btn-ref-start').addEventListener('click',startRefRecording);
-  $('btn-ref-stop').addEventListener('click',stopRefRecording);
-  $('btn-ref-file').addEventListener('click',openRefFileUpload);
-  // btn-gate 제거됨 — 시작 프레임은 프레임 피커에서만 설정
-  $('ref-file-input').addEventListener('change',onRefFileSelected);
-  $('fp-close').addEventListener('click',closeFramePicker);
-  $('fp-save').addEventListener('click',saveRefFrame);
-  $('fp-gate-save').addEventListener('click',saveGateFrame);
-  $('fp-photo').addEventListener('click',saveFpPhoto);
-  $('fp-prev').addEventListener('click',()=>{
-    const fpv=$('fp-vid');fpv.currentTime=Math.max(0,fpv.currentTime-1/30);
-  });
-  $('fp-next').addEventListener('click',()=>{
-    const fpv=$('fp-vid');fpv.currentTime=Math.min(fpv.duration||999,fpv.currentTime+1/30);
-  });
-  $('fp-scrub').addEventListener('input',()=>{
-    const fpv=$('fp-vid'),dur=fpv.duration||1,max=parseInt($('fp-scrub').max)||1000;
-    fpv.currentTime=(parseInt($('fp-scrub').value)/max)*dur;
-  });
-  $('fp-vid').addEventListener('seeked',()=>{
-    _updateFpTime();_scheduleDetect();
-    const fpv=$('fp-vid'),dur=fpv.duration||1,max=parseInt($('fp-scrub').max)||1000;
-    $('fp-scrub').value=Math.round((fpv.currentTime/dur)*max);
-  });
-  $('btn-data-open').addEventListener('click',openDataModal);
-  $('btn-data-close').addEventListener('click',closeDataModal);
-  $('btn-data-copy-all').addEventListener('click',copyAllData);
-  $('btn-lang').addEventListener('click',(e)=>{
-    e.stopPropagation();$('lang-picker').classList.toggle('on');
-  });
-  document.querySelectorAll('.lpopt').forEach(el=>{
-    el.addEventListener('click',()=>{CL=el.dataset.lang;$('lang-picker').classList.remove('on');applyLang();});
-  });
-  document.addEventListener('click',()=>$('lang-picker').classList.remove('on'));
-  // Joint selection checkboxes
-  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
-    const lbl=$('jsel-'+k);if(!lbl) continue;
-    const cb=lbl.querySelector('input');
-    cb.addEventListener('change',()=>{
-      const nowChecked=cb.checked;
-      const otherSel=['knee','hip','trunk','spine','shoulder','elbow'].filter(j=>j!==k&&S.jointSel[j]);
-      if(!nowChecked&&!otherSel.length){cb.checked=true;return;}
-      S.jointSel[k]=nowChecked;
-      lbl.classList.toggle('active',nowChecked);
-    });
-  }
-  // Premium modal wiring
-  const _prmBadge=$('prm-badge');
-  if(_prmBadge) _prmBadge.addEventListener('click',()=>{
-    if(S.premium){
-      if(confirm('Lock premium? You will need the password to unlock again.')){
-        _setPremium(false);try{localStorage.removeItem('apl_premium');}catch(e){}
-      }
-    }else{requirePremium(()=>{});}
-  });
-  const _prmConfirm=$('prm-confirm');if(_prmConfirm)_prmConfirm.addEventListener('click',_tryUnlock);
-  const _prmCancel=$('prm-cancel');if(_prmCancel)_prmCancel.addEventListener('click',()=>{
-    $('prm-modal').classList.remove('on');_pendingPremiumCb=null;
-  });
-  const _prmInput=$('prm-input');if(_prmInput)_prmInput.addEventListener('keydown',e=>{
-    if(e.key==='Enter')_tryUnlock();
-    if(e.key==='Escape'){$('prm-modal').classList.remove('on');_pendingPremiumCb=null;}
-  });
-  // Source mode (camera / file)
-  $('src-cam-btn').addEventListener('click',()=>switchSrcMode('camera'));
-  $('src-file-btn').addEventListener('click',()=>switchSrcMode('file'));
-  $('ana-file-input').addEventListener('change',onAnaFileSelected);
-  const _shareBtn=$('btn-share');if(_shareBtn)_shareBtn.addEventListener('click',shareRecording);
-  const _saveBtn=$('btn-sum-save');
-  if(_saveBtn) _saveBtn.addEventListener('click',()=>requirePremium(()=>shareRecording()));
-  $('btn-main').addEventListener('click',()=>{
-    if(!S.ready) return;
-    if(S.live)stopLive();else startLive();
-  });
-  $('btn-flip-hdr').addEventListener('click',switchCamera);
-  $('btn-sum-close').addEventListener('click',()=>{
-    $('summary').classList.remove('on');
-    setTimeout(checkCameraHealth,300);
-  });
-
-  $('i-msg').textContent='카메라 시작 중...';
-  try{
-    const stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:'environment'},width:{ideal:1920,min:640},height:{ideal:1080,min:480},frameRate:{ideal:60}},audio:false});
-    S.stream=stream;vid.srcObject=stream;
-    await new Promise(r=>{vid.onloadedmetadata=r;});
-    vid.play();resizeCam();
-    window.addEventListener('resize',()=>{setAppHeight();resizeCam();});
-    vid.addEventListener('loadeddata',resizeCam);
-    document.addEventListener('visibilitychange',()=>{
-    if(document.hidden){
-      if(S.recorder&&S.recorder.state==='recording')stopRecording();
-      if(S.live)stopAnalysis();
-    }
-  });
-  loadModel();
-  }catch(e){
-    console.error('Camera init:',e);
-    $('i-msg').textContent='카메라 오류: '+e.message;
-  }
-}
 window.addEventListener('load',init);
 </script>
 </body>

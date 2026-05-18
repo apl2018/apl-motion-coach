@@ -2603,7 +2603,7 @@ async function startRecording(){
   }
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)_sessionChunks.push(e.data);};
   const _recIsCam=_srcMode==='camera';
-  S.recorder.onstop=()=>{if(_fallbackSaveTimer){clearTimeout(_fallbackSaveTimer);_fallbackSaveTimer=null;}saveRecording(_sessionChunks,_recWallMs); // [BUG1] file mode도 실제 녹화시간 전달};
+  S.recorder.onstop=()=>{if(_fallbackSaveTimer){clearTimeout(_fallbackSaveTimer);_fallbackSaveTimer=null;}saveRecording(_sessionChunks,_recWallMs);}; // [BUG1] file mode도 실제 녹화시간 전달
 
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;

@@ -1174,14 +1174,14 @@ function drawFrame(kps,cmp){
     if(!a||!b||a.score<CONF||b.score<CONF) continue;
     const pa=coverXY(a),pb=coverXY(b);
     ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);
-    ctx.strokeStyle='rgba(255,255,255,.70)';ctx.lineWidth=3;ctx.lineCap='round';ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.70)';ctx.lineWidth=2;ctx.lineCap='round';ctx.stroke();
   }
   for(const i of [5,6,7,8,11,12,13,14,15,16]){
     const kp=kps[i];if(!kp||kp.score<CONF) continue;
     const p=coverXY(kp);
-    ctx.beginPath();ctx.arc(p.x,p.y,8,0,Math.PI*2);
+    ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);
     ctx.fillStyle=kpColor(i,cmp);ctx.fill();
-    ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
   }
   if(isFrontal()&&_lastPos) drawPosOverlay(kps,_lastPos);
   if(isFrontal()&&_lastPos){
@@ -1190,10 +1190,10 @@ function drawFrame(kps,cmp){
     const ok=p=>p&&p.score>=CONF;
     const lHip=kps[11],rHip=kps[12],lSh=kps[5],rSh=kps[6];
     const lKnee=kps[13],rKnee=kps[14];
-    const _fsF=Math.max(13,Math.round(cvs.height*0.019)); // 화면 높이 기반 폰트 (저장영상과 일치)
+    const _fsF=12; // 라이브 화면 - 고정 12px (작게)
     function _drawFrontLbl(x,y,text,col){
       ctx.font=`bold ${_fsF}px -apple-system,sans-serif`;
-      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
+      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=2.5;
       ctx.strokeText(text,x,y);ctx.fillStyle=col;ctx.fillText(text,x,y);
     }
     function _posCol(key){
@@ -1230,7 +1230,7 @@ function drawFrame(kps,cmp){
     // 분석에 사용된 side(S.dir) → 상태 색상(초록/노랑/빨강)
     // 반대쪽 side → 회색 (참고용)
     const useLeft=S.dir!=='right';
-    const _fsA=Math.max(13,Math.round(cvs.height*0.021)); // 저장영상(~20px@960h)과 동일 비율
+    const _fsA=13; // 라이브 화면 - 고정 13px (작게)
     // [kpIndex, side('L'|'R'), angleFunc, jointKey, dx, dy]
     const sideMap=[
       {i:13,side:'L',af:()=>{const v=angle3(kps[11],kps[13],kps[15]);return v!==null?180-v:null;},k:'knee',    dx:8, dy:-6},
@@ -1261,7 +1261,7 @@ function drawFrame(kps,cmp){
         }
         const p=coverXY(kp);
         ctx.font=`bold ${_fsA}px -apple-system,sans-serif`;
-        ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=4;ctx.strokeText(t,p.x+dx,p.y+dy);
+        ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=2.5;ctx.strokeText(t,p.x+dx,p.y+dy);
         ctx.fillStyle=col;ctx.fillText(t,p.x+dx,p.y+dy);
       }
     }
@@ -2246,7 +2246,7 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       return `rgba(${r},${g},${b},${al})`;
     }
     function _lbl2(x,y,t,col){
-      ctx2.font=`bold ${Math.max(13,Math.round(compH*0.021))}px -apple-system,sans-serif`; // [BUG3] 반응형
+      ctx2.font=`bold 18px -apple-system,sans-serif`; // 저장영상 - 고정 18px
       ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=3.5;
       ctx2.strokeText(t,x,y);ctx2.fillStyle=col;ctx2.fillText(t,x,y);
     }
@@ -2361,7 +2361,7 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
           col='rgba(180,180,180,0.75)';
         }
         const p=xy(kp);
-        ctx2.font=`bold ${Math.max(13,Math.round(compH*0.021))}px -apple-system,sans-serif`; // [BUG3]
+        ctx2.font=`bold 20px -apple-system,sans-serif`; // 저장영상 - 고정 20px
         ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=4;ctx2.strokeText(t,p.x+dx,p.y+dy);
         ctx2.fillStyle=col;ctx2.fillText(t,p.x+dx,p.y+dy);
       }
@@ -2561,6 +2561,7 @@ async function startRecording(){
       compStream=new MediaStream(); // 파일 모드: 빈 스트림 (오디오만)
     }
   }
+  S.compStream=compStream; // [BUG1] 정지 시 video track stop을 위해 저장
 
   // Audio: AudioContext + 마이크
   try{
@@ -2657,6 +2658,7 @@ function stopRecording(){
       // No requestData() — timeslice mode delivers chunks automatically;
       // no-timeslice mode: stop() alone triggers final ondataavailable before onstop.
       // requestData() caused race condition on iOS (late ondataavailable after onstop).
+      if(S.compStream){S.compStream.getVideoTracks().forEach(t=>t.stop());S.compStream=null;} // [BUG1] frozen-frame 방지
       S.recorder.stop();
       _fallbackSaveTimer=setTimeout(()=>{
         _fallbackSaveTimer=null;

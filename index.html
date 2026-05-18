@@ -3942,7 +3942,7 @@ function drawPosOverlay(kps, pos){
     ctx.setLineDash([6,4]);
     ctx.beginPath(); ctx.moveTo(mSh.x,mSh.y); ctx.lineTo(mHip.x,mHip.y);
     ctx.strokeStyle=trunkCol; ctx.lineWidth=2.5; ctx.stroke();
-    ctx.setLineDash([    // 중점에 원
+    ctx.setLineDash([]);    // 중점에 원
     const mid={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
     ctx.beginPath();ctx.arc(mid.x,mid.y,5,0,Math.PI*2);ctx.fillStyle=trunkCol;ctx.fill();
     if(pos.trunkLean!=null){

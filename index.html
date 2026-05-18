@@ -1214,19 +1214,37 @@ function drawFrame(kps,cmp){
       const v=pos.rKneeOff,t=(v>0?'+':'')+v;
       _drawFrontLbl(p.x+8,p.y-6,t,_posCol('rKneeOff'));
     }
-  } else if(cmp){
-    // 측면 모드: 기존 각도값 표시
-    const lblMap=[
-      {i:13,k:'knee',dx:10,dy:-6},{i:14,k:'knee',dx:10,dy:-6},
-      {i:11,k:'hip',dx:10,dy:-6},{i:12,k:'hip',dx:10,dy:-6},
-      {i:5,k:'shoulder',dx:-46,dy:-8},{i:6,k:'shoulder',dx:10,dy:-8},
-      {i:7,k:'elbow',dx:10,dy:-6},{i:8,k:'elbow',dx:10,dy:-6},
+  } else {
+    // 측면 모드: 왼쪽/오른쪽 각도 독립 계산 후 각 관절에 표시
+    // 분석에 사용된 side(S.dir) → 상태 색상(초록/노랑/빨강)
+    // 반대쪽 side → 회색 (참고용)
+    const useLeft=S.dir!=='right';
+    // [kpIndex, side('L'|'R'), angleFunc, jointKey, dx, dy]
+    const sideMap=[
+      {i:13,side:'L',af:()=>angle3(kps[11],kps[13],kps[15]),k:'knee',    dx:8, dy:-6},
+      {i:14,side:'R',af:()=>angle3(kps[12],kps[14],kps[16]),k:'knee',    dx:8, dy:-6},
+      {i:11,side:'L',af:()=>angle3(kps[5], kps[11],kps[13]),k:'hip',     dx:8, dy:-6},
+      {i:12,side:'R',af:()=>angle3(kps[6], kps[12],kps[14]),k:'hip',     dx:8, dy:-6},
+      {i:5, side:'L',af:()=>angle3(kps[7], kps[5], kps[11]),k:'shoulder',dx:-48,dy:-8},
+      {i:6, side:'R',af:()=>angle3(kps[8], kps[6], kps[12]),k:'shoulder',dx:8, dy:-8},
+      {i:7, side:'L',af:()=>angle3(kps[5], kps[7], kps[9]), k:'elbow',   dx:8, dy:-6},
+      {i:8, side:'R',af:()=>angle3(kps[6], kps[8], kps[10]),k:'elbow',   dx:8, dy:-6},
     ];
-    for(const{i,k,dx,dy}of lblMap){
+    for(const{i,side,af,k,dx,dy}of sideMap){
       const kp=kps[i];
-      if(!kp||kp.score<CONF||!cmp[k]||cmp[k].cur===null) continue;
+      if(!kp||kp.score<CONF) continue;
       if(!S.jointSel[k]) continue;
-      const p=coverXY(kp),col=ST_COL[cmp[k].st]||'#fff',t=cmp[k].cur+'°';
+      const rawAng=af();
+      if(rawAng===null) continue;
+      const t=Math.round(rawAng)+'°';
+      const isAnalysisSide=(side==='L'&&useLeft)||(side==='R'&&!useLeft);
+      let col;
+      if(isAnalysisSide){
+        col=(cmp&&cmp[k]&&cmp[k].st)?ST_COL[cmp[k].st]||'#fff':'#fff';
+      }else{
+        col='rgba(180,180,180,0.75)'; // 반대쪽: 회색 (참고용)
+      }
+      const p=coverXY(kp);
       ctx.font='bold 13px -apple-system,sans-serif';
       ctx.strokeStyle='rgba(0,0,0,.8)';ctx.lineWidth=3;ctx.strokeText(t,p.x+dx,p.y+dy);
       ctx.fillStyle=col;ctx.fillText(t,p.x+dx,p.y+dy);
@@ -2293,15 +2311,36 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       _lbl2(p.x+8,p.y-6,t,posCol2('rKneeOff'));
     }
   }
-  // Angle labels (측면 모드만)
-  if(cmp&&!_frontal){
-    for(const{i,k}of[{i:13,k:'knee'},{i:14,k:'knee'},{i:11,k:'hip'},{i:12,k:'hip'}]){
+  // Angle labels (측면 모드만) — 왼쪽/오른쪽 독립 각도 계산
+  if(!_frontal){
+    const _useLeft2=S.dir!=='right';
+    const _sideMap2=[
+      {i:13,side:'L',af:()=>angle3(kps[11],kps[13],kps[15]),k:'knee',    dx:10,dy:-8},
+      {i:14,side:'R',af:()=>angle3(kps[12],kps[14],kps[16]),k:'knee',    dx:10,dy:-8},
+      {i:11,side:'L',af:()=>angle3(kps[5], kps[11],kps[13]),k:'hip',     dx:10,dy:-8},
+      {i:12,side:'R',af:()=>angle3(kps[6], kps[12],kps[14]),k:'hip',     dx:10,dy:-8},
+      {i:5, side:'L',af:()=>angle3(kps[7], kps[5], kps[11]),k:'shoulder',dx:-56,dy:-10},
+      {i:6, side:'R',af:()=>angle3(kps[8], kps[6], kps[12]),k:'shoulder',dx:10,dy:-10},
+      {i:7, side:'L',af:()=>angle3(kps[5], kps[7], kps[9]), k:'elbow',   dx:10,dy:-8},
+      {i:8, side:'R',af:()=>angle3(kps[6], kps[8], kps[10]),k:'elbow',   dx:10,dy:-8},
+    ];
+    for(const{i,side,af,k,dx,dy}of _sideMap2){
       const kp=kps[i];
-      if(!kp||kp.score<CONF||!cmp[k]||cmp[k].cur===null) continue;
-      const p=xy(kp),col=ST_COL[cmp[k].st]||'#fff',t=cmp[k].cur+'°';
+      if(!kp||kp.score<CONF) continue;
+      const rawAng=af();
+      if(rawAng===null) continue;
+      const t=Math.round(rawAng)+'°';
+      const isAnalysisSide=(side==='L'&&_useLeft2)||(side==='R'&&!_useLeft2);
+      let col;
+      if(isAnalysisSide){
+        col=(cmp&&cmp[k]&&cmp[k].st)?ST_COL[cmp[k].st]||'#fff':'#fff';
+      }else{
+        col='rgba(180,180,180,0.75)';
+      }
+      const p=xy(kp);
       ctx2.font='bold 20px -apple-system,sans-serif';
-      ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=4;ctx2.strokeText(t,p.x+12,p.y-8);
-      ctx2.fillStyle=col;ctx2.fillText(t,p.x+12,p.y-8);
+      ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=4;ctx2.strokeText(t,p.x+dx,p.y+dy);
+      ctx2.fillStyle=col;ctx2.fillText(t,p.x+dx,p.y+dy);
     }
   }
   // ── Angle panel on right side of recording (mirrors on-screen #abar) ──────
@@ -3123,10 +3162,40 @@ async function startLive(){
   // (zone-entry globals removed — using simple time-based feedback)
   $('rep-badge').classList.add('on');
   if(!S.refs[S.ex.id])$('no-ref').classList.add('on');
+  // ── 파일 모드: ended 이벤트로 즉시 중단 + 최대시간 초과 안전장치 ────────────
+  // loop()의 vid.ended 폴링만으로는 stall/버퍼링 시 감지 실패 → 녹화가 원본보다 2배로 길어짐
+  if(_srcMode==='file'){
+    const _onVidEnd=()=>{ if(S.live) stopLive(); };
+    vid.addEventListener('ended',_onVidEnd,{once:true});
+    // 최대 시간 초과: duration+3초 후에도 살아있으면 강제 종료
+    const _vidDur=vid.duration||0;
+    if(_vidDur>0){
+      const _maxTimer=setTimeout(()=>{ if(S.live) stopLive(); },(_vidDur+3)*1000);
+      // stopLive 시 클리어되도록 S에 보관
+      S._fileMaxTimer=_maxTimer;
+    }
+    // stall 감지: vid.currentTime이 2초 이상 변하지 않으면 재생 재시도
+    let _lastVidTime=-1,_stallCount=0;
+    S._stallInterval=setInterval(()=>{
+      if(!S.live){clearInterval(S._stallInterval);return;}
+      const ct=vid.currentTime;
+      if(ct===_lastVidTime){
+        _stallCount++;
+        if(_stallCount>=3){ // 2s×3=6s 이상 멈춤 → 강제 종료
+          clearInterval(S._stallInterval);
+          if(S.live) stopLive();
+        }
+      }else{_stallCount=0;}
+      _lastVidTime=ct;
+    },2000);
+  }
   startRecording(); // audioStream already set, so skips getUserMedia inside
   loop();
 }
 function stopLive(){
+  // 파일 모드 안전장치 클리어
+  if(S._fileMaxTimer){clearTimeout(S._fileMaxTimer);S._fileMaxTimer=null;}
+  if(S._stallInterval){clearInterval(S._stallInterval);S._stallInterval=null;}
   S.live=false;
   if(S.raf){cancelAnimationFrame(S.raf);S.raf=null;}
   if(_srcMode==='file') vid.pause();

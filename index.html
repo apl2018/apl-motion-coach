@@ -573,8 +573,8 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div id="zone-badge" class="out">범위 밖</div>
     <!-- [FIX-1] 정면 분석 좌우 수동 선택 -->
     <div id="front-flip-btns" style="display:none;position:absolute;bottom:62px;left:0;right:0;height:44px;pointer-events:auto;z-index:50">
-      <button id="front-flip-l" style="position:absolute;top:0;left:10px;padding:8px 16px;background:rgba(0,0,0,.65);color:#fff;border:1.5px solid rgba(255,255,255,.35);border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">← 좌</button>
-      <button id="front-flip-r" style="position:absolute;top:0;right:10px;padding:8px 16px;background:rgba(33,150,243,.75);color:#fff;border:1.5px solid #2196F3;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">우 →</button>
+      <button id="front-flip-l" style="position:absolute;top:0;left:10px;padding:6px 12px;background:rgba(0,0,0,.65);color:#fff;border:1.5px solid rgba(255,255,255,.5);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">← 좌</button>
+      <button id="front-flip-r" style="position:absolute;top:0;right:10px;padding:6px 12px;background:rgba(0,0,0,.65);color:#fff;border:1.5px solid rgba(255,255,255,.5);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">우 →</button>
     </div>
   </div>
 
@@ -790,8 +790,8 @@ ko:{flag:'🇰🇷',label:'KO',voice_lang:'ko-KR',
   model_ready:'AI\n준비\n완료',model_fail:'로드 실패',mdl_loading:'로딩 중',
   PRAISE:['완벽해!','아주 좋아!','훌륭해!','자세 좋아!'],
   FB:{
-    knee_str:{warn:'무릎 더 구부려.',crit:'무릎 90도로 더 구부려.'},
-    knee_bnt:{warn:'무릎 너무 구부렸어.',crit:'무릎 너무 굽혔어. 펴.'},
+    knee_str:{warn:'무릎 좀더 구부려.',crit:'무릎 많이 구부려.'},
+    knee_bnt:{warn:'무릎 너무 구부렸어.',crit:'무릎 좀 펴.'},
     hip_up:{warn:'엉덩이 더 낮춰.',crit:'엉덩이 더 내려.'},
     hip_fwd:{warn:'상체 더 세워.',crit:'상체 너무 숙였어.'},
     trunk_fwd:{warn:'상체 더 세워.',crit:'등 너무 굽었어. 세워.'},
@@ -833,7 +833,7 @@ en:{flag:'🇺🇸',label:'EN',voice_lang:'en-US',
   model_ready:'AI\nReady\n✓',model_fail:'Load Failed',mdl_loading:'Loading',
   PRAISE:['Perfect!','Great form!','Excellent!','Looking good!'],
   FB:{
-    knee_str:{warn:'Bend your knee a little more.',crit:'Bend your knee more. Aim for 90 degrees.'},
+    knee_str:{warn:'Bend your knee a bit more.',crit:'Bend your knee more.'},
     knee_bnt:{warn:'Straighten your knee slightly.',crit:'Your knee is bent too much.'},
     hip_up:{warn:'Lower your hips a little.',crit:'Flex your hip more. Lower your seat.'},
     hip_fwd:{warn:'Straighten your torso slightly.',crit:'Pelvis tilting forward. Stand taller.'},
@@ -1099,7 +1099,20 @@ function primaryFB(cmp){
   const map={knee:worst.dev>0?'knee_bnt':'knee_str',hip:worst.dev>0?'hip_fwd':'hip_up',
     trunk:worst.dev>0?'trunk_up':'trunk_fwd',spine:worst.dev>0?'spine_ext':'spine_flx',
     shoulder:worst.dev>0?'shoulder_str':'shoulder_flex',elbow:worst.dev>0?'elbow_str':'elbow_bnt'};
-  return{key:map[worst.k],st:worst.st};
+  const _sideJoints=['knee','shoulder','elbow'];
+  const _sideKey=_sideJoints.includes(worst.k)?(S.dir!=='right'?'left':'right'):null;
+  return{key:map[worst.k],st:worst.st,refAng:worst.ref,sideKey:_sideKey}; // [FB방향]
+}
+// 피드백 메시지에서 하드코딩된 각도(90)를 실제 기준 각도로 교체
+function getFBMsg(fb){
+  const msgs=TX[CL].FB[fb.key]; if(!msgs) return null;
+  let msg=msgs[fb.st]||msgs.warn; if(!msg) return null;
+  // [FB방향] 한국어: 관절 앞에 왼/오른 prefix 추가
+  if(CL==='ko'&&fb.sideKey){
+    const pfx=fb.sideKey==='left'?'왼':'오른';
+    msg=pfx+msg; // "무릎 좀더 구부려." → "왼무릎 좀더 구부려."
+  }
+  return msg;
 }
 const ZONE_THRESH=45; // avg deviation ≤45° across detected joints
 function isPoseInZone(angles,ref){
@@ -1305,8 +1318,7 @@ function doFeedback(cmp,inZone){
   S.goodN=0;
   if(now-S.lastFB<_FB_INTERVAL) return;
   const fb=primaryFB(cmp);if(!fb) return;
-  const msgs=FBL[fb.key];if(!msgs) return;
-  const msg=msgs[fb.st]||msgs.warn;
+  const msg=getFBMsg(fb);if(!msg) return;
   speak(msg);S.lastFB=now;
   S.fbLog[msg]=(S.fbLog[msg]||0)+1;
 }
@@ -1395,7 +1407,14 @@ async function _runDetection(){
             if(_gateState==='idle') _gateState='entry';
             else if(_gateState==='timing'){
               clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
-              _gateArmed=false;_gateEndDetected=false;_gateState='entry';
+              // [BUG6] 정면: 시작자세 복귀 = 렙 완료 → MIN_REP_MS 이상이면 즉시 피드백
+              if(_gateArmed&&(now2-_gateLastPrimeT)>=_MIN_REP_MS&&_lastCmp){
+                _gateArmed=false;_gateEndDetected=false;_lastRepT=now2;_gateState='entry';
+                S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
+                const _gRet2=_lastCmp;
+                S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
+                setTimeout(()=>{if(S.speak)return;let _ft=null;if(_lastPosCmp&&!posAllGood(_lastPosCmp))_ft=posFeedbackStr(_lastPosCmp);else if(!_lastPosCmp&&_lastPos)_ft=posAbsFeedback(_lastPos);else if(_gRet2){const _fo=overall(_gRet2);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_gRet2);if(_ffb){const _fm=getFBMsg(_ffb);if(_fm)_ft=_fm;}}}if(_ft){speak(_ft);}S.lastFB=Date.now();},_GATE_FB_DELAY);
+              }else{_gateArmed=false;_gateEndDetected=false;_gateState='entry';}
             }
           } else {
             if(_gateState==='entry'){
@@ -1415,7 +1434,7 @@ async function _runDetection(){
                     let _ft=null;
                     if(_lastPosCmp&&!posAllGood(_lastPosCmp)) _ft=posFeedbackStr(_lastPosCmp);
                     else if(!_lastPosCmp&&_lastPos) _ft=posAbsFeedback(_lastPos);
-                    else if(_lastCmp){const _fo=overall(_lastCmp);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_lastCmp);if(_ffb){const _fm=TX[CL].FB[_ffb.key];if(_fm)_ft=_fm[_ffb.st]||_fm.warn;}}}
+                    else if(_lastCmp){const _fo=overall(_lastCmp);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_lastCmp);if(_ffb){const _fm=getFBMsg(_ffb);if(_fm)_ft=_fm;}}}
                     if(_ft){speak(_ft);}
                     S.lastFB=Date.now(); // [BUG5] _ft 없어도 갱신
                   },_GATE_FB_DELAY);
@@ -1472,10 +1491,15 @@ async function _runDetection(){
             if(_gateState==='idle'){
               _gateState='entry';
             } else if(_gateState==='timing'){
-              // 스윙 중 시작 자세로 돌아옴 → 리셋 (동작 중단 또는 반복)
               clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null;
-              _gateArmed=false; _gateEndDetected=false;
-              _gateState='entry';
+              // [BUG6] 시작자세 복귀 = 렙 완료 신호 → MIN_REP_MS 이상 경과했으면 즉시 피드백
+              if(_gateArmed&&(now3-_gateLastPrimeT)>=_MIN_REP_MS&&_lastCmp){
+                _gateArmed=false;_gateEndDetected=false;_lastRepT=now3;_gateState='entry';
+                S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
+                const _gRet=_lastCmp;
+                S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
+                setTimeout(()=>{if(S.speak)return;let _t=null;const _o=overall(_gRet);if(_o==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];_t=_gp[Math.floor(Math.random()*_gp.length)];}else{const _fb=primaryFB(_gRet);if(_fb){const _m=getFBMsg(_fb);if(_m)_t=_m;}}if(_t)speak(_t);S.lastFB=Date.now();},_GATE_FB_DELAY);
+              }else{_gateArmed=false;_gateEndDetected=false;_gateState='entry';}
             }
           } else {
             if(_gateState==='entry'){
@@ -1499,7 +1523,7 @@ async function _runDetection(){
                     if(S.speak) return;
                     let _t=null; const _o=overall(_fc);
                     if(_o==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];_t=_gp[Math.floor(Math.random()*_gp.length)];}
-                    else{const _fb=primaryFB(_fc);if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_t=_msgs[_fb.st]||_msgs.warn;}}}
+                    else{const _fb=primaryFB(_fc);if(_fb){const _m=getFBMsg(_fb);if(_m)_t=_m;}}
                     if(_t) speak(_t);
                     S.lastFB=Date.now(); // [BUG5] 항상 갱신
                   },_GATE_FB_DELAY);
@@ -1528,7 +1552,7 @@ async function _runDetection(){
                       if(S.speak) return;
                       let _t=null; const _o=overall(_fc);
                       if(_o==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];_t=_gp[Math.floor(Math.random()*_gp.length)];}
-                      else{const _fb=primaryFB(_fc);if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_t=_msgs[_fb.st]||_msgs.warn;}}}
+                      else{const _fb=primaryFB(_fc);if(_fb){const _m=getFBMsg(_fb);if(_m)_t=_m;}}
                       if(_t) speak(_t);
                       S.lastFB=Date.now(); // [BUG5] 항상 갱신
                     },_GATE_FB_DELAY);
@@ -2093,7 +2117,7 @@ function updateRepOsc(angles,ref){
             _fbText=_gp[Math.floor(Math.random()*_gp.length)];
           }else{
             const _fb=primaryFB(_fbCmp);
-            if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_fbText=_msgs[_fb.st]||_msgs.warn;}}
+            if(_fb){const _m=getFBMsg(_fb);if(_m)_fbText=_m;}
           }
           if(_fbText) speak(_fbText);
           S.lastFB=Date.now(); // [BUG5] 항상 갱신
@@ -2617,10 +2641,11 @@ async function startRecording(){
       // 파일 모드: vid.duration 기준 하드 종료 — ended 이벤트 누락 시 2배 길이 버그 방지
       if(S._recHardStop){clearTimeout(S._recHardStop);S._recHardStop=null;}
       if(_srcMode==='file'&&vid.duration&&isFinite(vid.duration)){
+        const _rem=Math.max((vid.duration-vid.currentTime)*1000+300,1000); // 잔여시간+여유
         S._recHardStop=setTimeout(()=>{
           S._recHardStop=null;
           if(S.live) stopLive(); else stopRecording();
-        },vid.duration*1000+500);
+        },_rem); // [BUG1] 전체 duration 대신 잔여 시간 기준
       }
     }
   },200);
@@ -2641,6 +2666,8 @@ function stopRecording(){
     const _wallRaw=Date.now()-_recStartMs;
     _recWallMs=Math.max(_wallRaw,1000);   // 최소 1초
     _recWallMs=Math.min(_recWallMs,3600000); // 최대 1시간 안전 캡
+    // [BUG1] 파일모드: captureStream 동결 프레임 보정 — patchMP4에 올바른 길이 전달
+    if(_srcMode==='file'&&vid.duration>0&&isFinite(vid.duration))_recWallMs=Math.min(_recWallMs,Math.round(vid.duration*1000));
   }else{_recWallMs=(vid.duration>0&&isFinite(vid.duration))?Math.round(vid.duration*1000):0;} // [BUG1] file mode 폴백
   _recStartMs=0;
   _compDrawing=false;
@@ -3979,7 +4006,7 @@ function drawPosOverlay(kps, pos){
     if(pos.trunkLean!=null){
       const _xf=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1); // [FIX-2] frontFlip 반영
       const dv=pos.trunkLean*_xf,side=dv>0?'우 ':'좌 ';
-      const _fsT=Math.max(14,Math.round(cvs.height*0.019));
+      const _fsT=12; // 라이브 화면 - 고정 12px
       ctx.font=`bold ${_fsT}px -apple-system,sans-serif`;
       ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;ctx.textAlign='left';
       ctx.strokeText(side+Math.abs(pos.trunkLean)+'°',mid.x+10,mid.y-4);
@@ -4022,7 +4049,7 @@ function drawPosOverlay(kps, pos){
   // ⑥ 관절 레이블 (어깨/골반/무릎 수치) — [FIX-2] frontFlip 반영
   ctx.textAlign='left';
   const _xfPO=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1);
-  const _fsPO=Math.max(14,Math.round(cvs.height*0.019));
+  const _fsPO=12; // 라이브 화면 - 고정 12px
   if(ok(lSh)&&ok(rSh)&&pos.shoulderTilt!=null){
     const mSh2=coverXY({x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2,score:1});
     const v=pos.shoulderTilt,side=(v*_xfPO)>0?'우↓':'좌↓',t=side+Math.abs(v)+'°';
@@ -4059,14 +4086,8 @@ function drawPosOverlay(kps, pos){
 function _updateFrontFlipBtns(){
   const fbDiv=$('front-flip-btns');if(!fbDiv) return;
   const lBtn=$('front-flip-l'),rBtn=$('front-flip-r');
-  if(lBtn){
-    lBtn.style.background=S.frontFlip?'rgba(33,150,243,.75)':'rgba(0,0,0,.65)';
-    lBtn.style.borderColor=S.frontFlip?'#2196F3':'rgba(255,255,255,.35)';
-  }
-  if(rBtn){
-    rBtn.style.background=!S.frontFlip?'rgba(33,150,243,.75)':'rgba(0,0,0,.65)';
-    rBtn.style.borderColor=!S.frontFlip?'#2196F3':'rgba(255,255,255,.35)';
-  }
+  if(lBtn) lBtn.textContent=S.frontFlip?'← 우':'← 좌'; // 글자 스왑
+  if(rBtn) rBtn.textContent=S.frontFlip?'좌 →':'우 →'; // 글자 스왑
   fbDiv.style.display=isFrontal()?'block':'none';
 }
 
@@ -4103,8 +4124,8 @@ async function init(){
     });
   });
   // [FIX-1] 정면 좌우 수동 선택 버튼
-  $('front-flip-l').addEventListener('click',()=>{S.frontFlip=true;_updateFrontFlipBtns();});
-  $('front-flip-r').addEventListener('click',()=>{S.frontFlip=false;_updateFrontFlipBtns();});
+  $('front-flip-l').addEventListener('click',()=>{S.frontFlip=!S.frontFlip;_updateFrontFlipBtns();}); // 어느 쪽이든 토글
+  $('front-flip-r').addEventListener('click',()=>{S.frontFlip=!S.frontFlip;_updateFrontFlipBtns();});
   _updateFrontFlipBtns();
   $('rename-cancel').addEventListener('click',closeRenameModal);
   $('rename-confirm').addEventListener('click',confirmRename);
@@ -4290,14 +4311,4 @@ async function init(){
     $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
     $('init').classList.add('gone');
     const rb=document.createElement('div');
-    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
-    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
-    document.body.appendChild(rb);
-  }
-  speechSynthesis.getVoices();
-}
-
-window.addEventListener('load',init);
-</script>
-</body>
-</html>
+    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:1

@@ -1055,9 +1055,10 @@ function extractAngles(kps){
   const kn=useLeft?kps[13]:kps[14],an=useLeft?kps[15]:kps[16];
   const el=useLeft?kps[7]:kps[8],wr=useLeft?kps[9]:kps[10];
   const mSh=mid(kps[5],kps[6]),mHp=mid(kps[11],kps[12]);
+  // 굴곡각도 convention: 0°=곧게 선 자세, 구부릴수록 증가 (180° - 기하각도)
   return{
-    knee:angle3(hp,kn,an),
-    hip:angle3(sh,hp,kn),
+    knee:(v=>v!==null?180-v:null)(angle3(hp,kn,an)),
+    hip:(v=>v!==null?180-v:null)(angle3(sh,hp,kn)),
     trunk:angleV(mSh,mHp),
     spine:angle3(kps[0],mSh,mHp),
     shoulder:angle3(el,sh,hp),   // 어깨 굴곡 각도 (상완 vs 체간)
@@ -1088,7 +1089,8 @@ function primaryFB(cmp){
     if(Math.abs(c.dev)>wabs){worst={k,...c};wabs=Math.abs(c.dev);}
   }
   if(!worst) return null;
-  const map={knee:worst.dev>0?'knee_str':'knee_bnt',hip:worst.dev>0?'hip_up':'hip_fwd',
+  // 굴곡각도 convention 변경: dev>0 = 현재가 기준보다 더 구부러짐 → 역전 피드백
+  const map={knee:worst.dev>0?'knee_bnt':'knee_str',hip:worst.dev>0?'hip_fwd':'hip_up',
     trunk:worst.dev>0?'trunk_up':'trunk_fwd',spine:worst.dev>0?'spine_ext':'spine_flx',
     shoulder:worst.dev>0?'shoulder_str':'shoulder_flex',elbow:worst.dev>0?'elbow_str':'elbow_bnt'};
   return{key:map[worst.k],st:worst.st};
@@ -1221,10 +1223,10 @@ function drawFrame(kps,cmp){
     const useLeft=S.dir!=='right';
     // [kpIndex, side('L'|'R'), angleFunc, jointKey, dx, dy]
     const sideMap=[
-      {i:13,side:'L',af:()=>angle3(kps[11],kps[13],kps[15]),k:'knee',    dx:8, dy:-6},
-      {i:14,side:'R',af:()=>angle3(kps[12],kps[14],kps[16]),k:'knee',    dx:8, dy:-6},
-      {i:11,side:'L',af:()=>angle3(kps[5], kps[11],kps[13]),k:'hip',     dx:8, dy:-6},
-      {i:12,side:'R',af:()=>angle3(kps[6], kps[12],kps[14]),k:'hip',     dx:8, dy:-6},
+      {i:13,side:'L',af:()=>{const v=angle3(kps[11],kps[13],kps[15]);return v!==null?180-v:null;},k:'knee',    dx:8, dy:-6},
+      {i:14,side:'R',af:()=>{const v=angle3(kps[12],kps[14],kps[16]);return v!==null?180-v:null;},k:'knee',    dx:8, dy:-6},
+      {i:11,side:'L',af:()=>{const v=angle3(kps[5], kps[11],kps[13]);return v!==null?180-v:null;},k:'hip',     dx:8, dy:-6},
+      {i:12,side:'R',af:()=>{const v=angle3(kps[6], kps[12],kps[14]);return v!==null?180-v:null;},k:'hip',     dx:8, dy:-6},
       {i:5, side:'L',af:()=>angle3(kps[7], kps[5], kps[11]),k:'shoulder',dx:-48,dy:-8},
       {i:6, side:'R',af:()=>angle3(kps[8], kps[6], kps[12]),k:'shoulder',dx:8, dy:-8},
       {i:7, side:'L',af:()=>angle3(kps[5], kps[7], kps[9]), k:'elbow',   dx:8, dy:-6},
@@ -1543,7 +1545,7 @@ function loop(){
     _runDetection();
   }
   if(S.live){
-    if(_srcMode==='file'&&(vid.ended||vid.paused&&vid.currentTime>=vid.duration-0.1)){stopLive();return;}
+    if(_srcMode==='file'&&(vid.ended||(vid.duration>0&&vid.currentTime>=vid.duration-0.1))){stopLive();return;}
     S.raf=requestAnimationFrame(loop);
   }
 }
@@ -2315,10 +2317,10 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
   if(!_frontal){
     const _useLeft2=S.dir!=='right';
     const _sideMap2=[
-      {i:13,side:'L',af:()=>angle3(kps[11],kps[13],kps[15]),k:'knee',    dx:10,dy:-8},
-      {i:14,side:'R',af:()=>angle3(kps[12],kps[14],kps[16]),k:'knee',    dx:10,dy:-8},
-      {i:11,side:'L',af:()=>angle3(kps[5], kps[11],kps[13]),k:'hip',     dx:10,dy:-8},
-      {i:12,side:'R',af:()=>angle3(kps[6], kps[12],kps[14]),k:'hip',     dx:10,dy:-8},
+      {i:13,side:'L',af:()=>{const v=angle3(kps[11],kps[13],kps[15]);return v!==null?180-v:null;},k:'knee',    dx:10,dy:-8},
+      {i:14,side:'R',af:()=>{const v=angle3(kps[12],kps[14],kps[16]);return v!==null?180-v:null;},k:'knee',    dx:10,dy:-8},
+      {i:11,side:'L',af:()=>{const v=angle3(kps[5], kps[11],kps[13]);return v!==null?180-v:null;},k:'hip',     dx:10,dy:-8},
+      {i:12,side:'R',af:()=>{const v=angle3(kps[6], kps[12],kps[14]);return v!==null?180-v:null;},k:'hip',     dx:10,dy:-8},
       {i:5, side:'L',af:()=>angle3(kps[7], kps[5], kps[11]),k:'shoulder',dx:-56,dy:-10},
       {i:6, side:'R',af:()=>angle3(kps[8], kps[6], kps[12]),k:'shoulder',dx:10,dy:-10},
       {i:7, side:'L',af:()=>angle3(kps[5], kps[7], kps[9]), k:'elbow',   dx:10,dy:-8},
@@ -2578,6 +2580,14 @@ async function startRecording(){
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
       S.recTimer=setInterval(()=>{S.recSec++;updateRecTime();},1000);
+      // 파일 모드: vid.duration 기준 하드 종료 — ended 이벤트 누락 시 2배 길이 버그 방지
+      if(S._recHardStop){clearTimeout(S._recHardStop);S._recHardStop=null;}
+      if(_srcMode==='file'&&vid.duration&&isFinite(vid.duration)){
+        S._recHardStop=setTimeout(()=>{
+          S._recHardStop=null;
+          if(S.live) stopLive(); else stopRecording();
+        },vid.duration*1000+500);
+      }
     }
   },200);
 }
@@ -2603,6 +2613,7 @@ function stopRecording(){
   _coachOverlay=null;
   _introUntil=0;
   if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;}
+  if(S._recHardStop){clearTimeout(S._recHardStop);S._recHardStop=null;}
   if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
   if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}
@@ -3181,7 +3192,7 @@ async function startLive(){
       const ct=vid.currentTime;
       if(ct===_lastVidTime){
         _stallCount++;
-        if(_stallCount>=3){ // 2s×3=6s 이상 멈춤 → 강제 종료
+        if(_stallCount>=1){ // 2s 이상 멈춤 → 강제 종료
           clearInterval(S._stallInterval);
           if(S.live) stopLive();
         }

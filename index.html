@@ -572,9 +572,9 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div id="rep-badge"><div id="rep-num">0</div><div id="rep-lbl">회</div></div>
     <div id="zone-badge" class="out">범위 밖</div>
     <!-- [FIX-1] 정면 분석 좌우 수동 선택 -->
-    <div id="front-flip-btns" style="display:none;position:absolute;bottom:62px;left:0;right:0;pointer-events:none">
-      <button id="front-flip-l" style="pointer-events:all;position:absolute;left:10px;padding:8px 16px;background:rgba(0,0,0,.65);color:#fff;border:1.5px solid rgba(255,255,255,.35);border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">← 좌</button>
-      <button id="front-flip-r" style="pointer-events:all;position:absolute;right:10px;padding:8px 16px;background:rgba(33,150,243,.75);color:#fff;border:1.5px solid #2196F3;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">우 →</button>
+    <div id="front-flip-btns" style="display:none;position:absolute;bottom:62px;left:0;right:0;height:44px;pointer-events:auto;z-index:50">
+      <button id="front-flip-l" style="position:absolute;top:0;left:10px;padding:8px 16px;background:rgba(0,0,0,.65);color:#fff;border:1.5px solid rgba(255,255,255,.35);border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">← 좌</button>
+      <button id="front-flip-r" style="position:absolute;top:0;right:10px;padding:8px 16px;background:rgba(33,150,243,.75);color:#fff;border:1.5px solid #2196F3;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">우 →</button>
     </div>
   </div>
 
@@ -1242,24 +1242,28 @@ function drawFrame(kps,cmp){
       {i:7, side:'L',af:()=>angle3(kps[5], kps[7], kps[9]), k:'elbow',   dx:8, dy:-6},
       {i:8, side:'R',af:()=>angle3(kps[6], kps[8], kps[10]),k:'elbow',   dx:8, dy:-6},
     ];
-    for(const{i,side,af,k,dx,dy}of sideMap){
-      const kp=kps[i];
-      if(!kp||kp.score<CONF) continue;
-      if(!S.jointSel[k]) continue;
-      const rawAng=af();
-      if(rawAng===null) continue;
-      const t=Math.round(rawAng)+'°';
-      const isAnalysisSide=(side==='L'&&useLeft)||(side==='R'&&!useLeft);
-      let col;
-      if(isAnalysisSide){
-        col=(cmp&&cmp[k]&&cmp[k].st)?ST_COL[cmp[k].st]||'#fff':'#fff';
-      }else{
-        col='rgba(180,180,180,0.75)'; // 반대쪽: 회색 (참고용)
+    // [BUG4] 2-pass: 회색(참고값) 먼저, 컬러(분석값) 나중 → 메인값이 항상 앞에
+    for(const _zPass of [false,true]){
+      for(const{i,side,af,k,dx,dy}of sideMap){
+        const kp=kps[i];
+        if(!kp||kp.score<CONF) continue;
+        if(!S.jointSel[k]) continue;
+        const rawAng=af();
+        if(rawAng===null) continue;
+        const isAnalysisSide=(side==='L'&&useLeft)||(side==='R'&&!useLeft);
+        if(_zPass!==isAnalysisSide) continue; // pass0=gray, pass1=colored
+        const t=Math.round(rawAng)+'°';
+        let col;
+        if(isAnalysisSide){
+          col=(cmp&&cmp[k]&&cmp[k].st)?ST_COL[cmp[k].st]||'#fff':'#fff';
+        }else{
+          col='rgba(180,180,180,0.75)'; // 반대쪽: 회색 (참고용)
+        }
+        const p=coverXY(kp);
+        ctx.font=`bold ${_fsA}px -apple-system,sans-serif`;
+        ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=4;ctx.strokeText(t,p.x+dx,p.y+dy);
+        ctx.fillStyle=col;ctx.fillText(t,p.x+dx,p.y+dy);
       }
-      const p=coverXY(kp);
-      ctx.font=`bold ${_fsA}px -apple-system,sans-serif`;
-      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=4;ctx.strokeText(t,p.x+dx,p.y+dy);
-      ctx.fillStyle=col;ctx.fillText(t,p.x+dx,p.y+dy);
     }
   }
 }
@@ -1412,7 +1416,8 @@ async function _runDetection(){
                     if(_lastPosCmp&&!posAllGood(_lastPosCmp)) _ft=posFeedbackStr(_lastPosCmp);
                     else if(!_lastPosCmp&&_lastPos) _ft=posAbsFeedback(_lastPos);
                     else if(_lastCmp){const _fo=overall(_lastCmp);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_lastCmp);if(_ffb){const _fm=TX[CL].FB[_ffb.key];if(_fm)_ft=_fm[_ffb.st]||_fm.warn;}}}
-                    if(_ft){speak(_ft);S.lastFB=Date.now();}
+                    if(_ft){speak(_ft);}
+                    S.lastFB=Date.now(); // [BUG5] _ft 없어도 갱신
                   },_GATE_FB_DELAY);
                 },_fSegMs+500);
               }
@@ -1441,6 +1446,7 @@ async function _runDetection(){
                 S.lastPr=now2;
               }
             }
+            else{S.lastFB=now2;} // [BUG5] 피드백 없어도 갱신 → 무한 재시도 방지
           }
         }
       } else if(cmp){
@@ -1495,6 +1501,7 @@ async function _runDetection(){
                     if(_o==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];_t=_gp[Math.floor(Math.random()*_gp.length)];}
                     else{const _fb=primaryFB(_fc);if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_t=_msgs[_fb.st]||_msgs.warn;}}}
                     if(_t) speak(_t);
+                    S.lastFB=Date.now(); // [BUG5] 항상 갱신
                   },_GATE_FB_DELAY);
                 },_segMs+500);
               }
@@ -1523,6 +1530,7 @@ async function _runDetection(){
                       if(_o==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];_t=_gp[Math.floor(Math.random()*_gp.length)];}
                       else{const _fb=primaryFB(_fc);if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_t=_msgs[_fb.st]||_msgs.warn;}}}
                       if(_t) speak(_t);
+                      S.lastFB=Date.now(); // [BUG5] 항상 갱신
                     },_GATE_FB_DELAY);
                   },_GATE_FB_DELAY);
                 }
@@ -2069,7 +2077,7 @@ function updateRepOsc(angles,ref){
       // _gateArmed=true (시작 자세 이탈 후 대기 중) + 기준 자세 있음
       // 주의: speechSynthesis.cancel()은 게이트 발화 직전에만 실행
       //       (게이트 없는 단순 렙카운트 시 진행 중인 음성을 끊지 않음)
-      if(_gateArmed&&_lastCmp){
+      if(_gateArmed&&!_gateEndDetected&&_lastCmp){ // [BUG5] _gateEndDetected 체크 추가
         S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){} // 발화 직전에만 취소
         clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null; // 백업 타이머 취소
         _gateArmed=false; _gateEndDetected=false; // 즉시 소비 → 이중 발화 방지
@@ -2088,6 +2096,7 @@ function updateRepOsc(angles,ref){
             if(_fb){const _msgs=TX[CL].FB[_fb.key];if(_msgs){_fbText=_msgs[_fb.st]||_msgs.warn;}}
           }
           if(_fbText) speak(_fbText);
+          S.lastFB=Date.now(); // [BUG5] 항상 갱신
         },_GATE_FB_DELAY);
       }
     }
@@ -2237,7 +2246,7 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       return `rgba(${r},${g},${b},${al})`;
     }
     function _lbl2(x,y,t,col){
-      ctx2.font='bold 18px -apple-system,sans-serif'; // 측면 분석과 동일한 고정 크기
+      ctx2.font=`bold ${Math.max(13,Math.round(compH*0.021))}px -apple-system,sans-serif`; // [BUG3] 반응형
       ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=3.5;
       ctx2.strokeText(t,x,y);ctx2.fillStyle=col;ctx2.fillText(t,x,y);
     }
@@ -2335,23 +2344,27 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       {i:7, side:'L',af:()=>angle3(kps[5], kps[7], kps[9]), k:'elbow',   dx:10,dy:-8},
       {i:8, side:'R',af:()=>angle3(kps[6], kps[8], kps[10]),k:'elbow',   dx:10,dy:-8},
     ];
-    for(const{i,side,af,k,dx,dy}of _sideMap2){
-      const kp=kps[i];
-      if(!kp||kp.score<CONF) continue;
-      const rawAng=af();
-      if(rawAng===null) continue;
-      const t=Math.round(rawAng)+'°';
-      const isAnalysisSide=(side==='L'&&_useLeft2)||(side==='R'&&!_useLeft2);
-      let col;
-      if(isAnalysisSide){
-        col=(cmp&&cmp[k]&&cmp[k].st)?ST_COL[cmp[k].st]||'#fff':'#fff';
-      }else{
-        col='rgba(180,180,180,0.75)';
+    // [BUG4] 2-pass: 회색 먼저, 컬러 나중 + [BUG3] 반응형 폰트
+    for(const _zPass2 of [false,true]){
+      for(const{i,side,af,k,dx,dy}of _sideMap2){
+        const kp=kps[i];
+        if(!kp||kp.score<CONF) continue;
+        const rawAng=af();
+        if(rawAng===null) continue;
+        const isAnalysisSide=(side==='L'&&_useLeft2)||(side==='R'&&!_useLeft2);
+        if(_zPass2!==isAnalysisSide) continue;
+        const t=Math.round(rawAng)+'°';
+        let col;
+        if(isAnalysisSide){
+          col=(cmp&&cmp[k]&&cmp[k].st)?ST_COL[cmp[k].st]||'#fff':'#fff';
+        }else{
+          col='rgba(180,180,180,0.75)';
+        }
+        const p=xy(kp);
+        ctx2.font=`bold ${Math.max(13,Math.round(compH*0.021))}px -apple-system,sans-serif`; // [BUG3]
+        ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=4;ctx2.strokeText(t,p.x+dx,p.y+dy);
+        ctx2.fillStyle=col;ctx2.fillText(t,p.x+dx,p.y+dy);
       }
-      const p=xy(kp);
-      ctx2.font='bold 20px -apple-system,sans-serif';
-      ctx2.strokeStyle='rgba(0,0,0,.85)';ctx2.lineWidth=4;ctx2.strokeText(t,p.x+dx,p.y+dy);
-      ctx2.fillStyle=col;ctx2.fillText(t,p.x+dx,p.y+dy);
     }
   }
   // ── Angle panel on right side of recording (mirrors on-screen #abar) ──────
@@ -2590,7 +2603,7 @@ async function startRecording(){
   }
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)_sessionChunks.push(e.data);};
   const _recIsCam=_srcMode==='camera';
-  S.recorder.onstop=()=>{if(_fallbackSaveTimer){clearTimeout(_fallbackSaveTimer);_fallbackSaveTimer=null;}saveRecording(_sessionChunks,_recIsCam?_recWallMs:0);};
+  S.recorder.onstop=()=>{if(_fallbackSaveTimer){clearTimeout(_fallbackSaveTimer);_fallbackSaveTimer=null;}saveRecording(_sessionChunks,_recWallMs); // [BUG1] file mode도 실제 녹화시간 전달};
 
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
@@ -2627,7 +2640,7 @@ function stopRecording(){
     const _wallRaw=Date.now()-_recStartMs;
     _recWallMs=Math.max(_wallRaw,1000);   // 최소 1초
     _recWallMs=Math.min(_recWallMs,3600000); // 최대 1시간 안전 캡
-  }else{_recWallMs=0;}
+  }else{_recWallMs=(vid.duration>0&&isFinite(vid.duration))?Math.round(vid.duration*1000):0;} // [BUG1] file mode 폴백
   _recStartMs=0;
   _compDrawing=false;
   _coachOverlay=null;

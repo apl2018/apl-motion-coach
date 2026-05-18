@@ -1174,14 +1174,14 @@ function drawFrame(kps,cmp){
     if(!a||!b||a.score<CONF||b.score<CONF) continue;
     const pa=coverXY(a),pb=coverXY(b);
     ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);
-    ctx.strokeStyle='rgba(255,255,255,.65)';ctx.lineWidth=2.5;ctx.lineCap='round';ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.70)';ctx.lineWidth=3;ctx.lineCap='round';ctx.stroke();
   }
   for(const i of [5,6,7,8,11,12,13,14,15,16]){
     const kp=kps[i];if(!kp||kp.score<CONF) continue;
     const p=coverXY(kp);
-    ctx.beginPath();ctx.arc(p.x,p.y,7,0,Math.PI*2);
+    ctx.beginPath();ctx.arc(p.x,p.y,8,0,Math.PI*2);
     ctx.fillStyle=kpColor(i,cmp);ctx.fill();
-    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
   }
   if(isFrontal()&&_lastPos) drawPosOverlay(kps,_lastPos);
   if(isFrontal()&&_lastPos){
@@ -1190,25 +1190,28 @@ function drawFrame(kps,cmp){
     const ok=p=>p&&p.score>=CONF;
     const lHip=kps[11],rHip=kps[12],lSh=kps[5],rSh=kps[6];
     const lKnee=kps[13],rKnee=kps[14];
+    const _fsF=Math.max(13,Math.round(cvs.height*0.019)); // 화면 높이 기반 폰트 (저장영상과 일치)
     function _drawFrontLbl(x,y,text,col){
-      ctx.font='bold 13px -apple-system,sans-serif';
-      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3;
+      ctx.font=`bold ${_fsF}px -apple-system,sans-serif`;
+      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
       ctx.strokeText(text,x,y);ctx.fillStyle=col;ctx.fillText(text,x,y);
     }
     function _posCol(key){
       const st=pcmp&&pcmp[key]?pcmp[key].st:'unk';
       return ST_COL_POS[st]||'#fff';
     }
+    // [FIX-2] 정면 좌우 표기에 frontFlip 반영: 카메라 기준 → 신체 기준 방향 변환
+    const _xfD=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1);
     // 어깨 기울기 — 어깨 연결선 중앙 위
     if(ok(lSh)&&ok(rSh)&&pos.shoulderTilt!=null){
       const mSh=coverXY({x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2,score:1});
-      const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓';
+      const v=pos.shoulderTilt,side=(v*_xfD)>0?'우↓':'좌↓';
       _drawFrontLbl(mSh.x-18,mSh.y-12,side+Math.abs(v)+'°',_posCol('shoulderTilt'));
     }
     // 골반 기울기 — 골반 연결선 중앙 위
     if(ok(lHip)&&ok(rHip)&&pos.hipTilt!=null){
       const mHip=coverXY({x:(lHip.x+rHip.x)/2,y:(lHip.y+rHip.y)/2,score:1});
-      const v=pos.hipTilt,side=v>0?'우↓':'좌↓';
+      const v=pos.hipTilt,side=(v*_xfD)>0?'우↓':'좌↓';
       _drawFrontLbl(mHip.x-18,mHip.y-8,side+Math.abs(v)+'°',_posCol('hipTilt'));
     }
     // 무릎 오프셋 — 각 무릎 옆
@@ -1227,6 +1230,7 @@ function drawFrame(kps,cmp){
     // 분석에 사용된 side(S.dir) → 상태 색상(초록/노랑/빨강)
     // 반대쪽 side → 회색 (참고용)
     const useLeft=S.dir!=='right';
+    const _fsA=Math.max(13,Math.round(cvs.height*0.021)); // 저장영상(~20px@960h)과 동일 비율
     // [kpIndex, side('L'|'R'), angleFunc, jointKey, dx, dy]
     const sideMap=[
       {i:13,side:'L',af:()=>{const v=angle3(kps[11],kps[13],kps[15]);return v!==null?180-v:null;},k:'knee',    dx:8, dy:-6},
@@ -1253,8 +1257,8 @@ function drawFrame(kps,cmp){
         col='rgba(180,180,180,0.75)'; // 반대쪽: 회색 (참고용)
       }
       const p=coverXY(kp);
-      ctx.font='bold 13px -apple-system,sans-serif';
-      ctx.strokeStyle='rgba(0,0,0,.8)';ctx.lineWidth=3;ctx.strokeText(t,p.x+dx,p.y+dy);
+      ctx.font=`bold ${_fsA}px -apple-system,sans-serif`;
+      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=4;ctx.strokeText(t,p.x+dx,p.y+dy);
       ctx.fillStyle=col;ctx.fillText(t,p.x+dx,p.y+dy);
     }
   }
@@ -2260,10 +2264,8 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       const mid2={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
       ctx2.beginPath();ctx2.arc(mid2.x,mid2.y,5,0,Math.PI*2);ctx2.fillStyle=tc;ctx2.fill();
       if(pos.trunkLean!=null){
-        // trunkLean은 화면 x 좌표 기준 → 정면 촬영 시 신체 좌우와 반전
-        // 'back'(뒤에서 촬영): 화면 좌우 = 신체 좌우 → 그대로
-        // 'front'(앞에서 촬영): 화면 좌우 ≠ 신체 좌우 → 반전 필요
-        const _xf2=S.dir==='back'?1:-1;
+        // [FIX-2] frontFlip 반영: 카메라 기준 → 신체 기준 방향 변환
+        const _xf2=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1);
         const dv2=pos.trunkLean*_xf2,side2=dv2>0?'우 ':'좌 ';
         ctx2.textAlign='left';
         _lbl2(mid2.x+10,mid2.y-4,side2+Math.abs(pos.trunkLean)+'°',tc);
@@ -2298,16 +2300,17 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
     }
     kneeLineComp(lHip2,lKnee2,lAnk2);
     kneeLineComp(rHip2,rKnee2,rAnk2);
-    // 관절 레이블 (정면 모드) — 고정 오프셋
+    // 관절 레이블 (정면 모드) — [FIX-2] frontFlip 반영
     ctx2.textAlign='left';
+    const _xfD2=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1);
     if(ok2(lSh2)&&ok2(rSh2)&&pos.shoulderTilt!=null){
       const mSh=xy({x:(lSh2.x+rSh2.x)/2,y:(lSh2.y+rSh2.y)/2,score:1});
-      const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓';
+      const v=pos.shoulderTilt,side=(v*_xfD2)>0?'우↓':'좌↓';
       _lbl2(mSh.x-50,mSh.y-10,side+Math.abs(v)+'°',posCol2('shoulderTilt'));
     }
     if(ok2(lHip2)&&ok2(rHip2)&&pos.hipTilt!=null){
       const mHip=xy({x:(lHip2.x+rHip2.x)/2,y:(lHip2.y+rHip2.y)/2,score:1});
-      const v=pos.hipTilt,side=v>0?'우↓':'좌↓';
+      const v=pos.hipTilt,side=(v*_xfD2)>0?'우↓':'좌↓';
       _lbl2(mHip.x-50,mHip.y-8,side+Math.abs(v)+'°',posCol2('hipTilt'));
     }
     if(ok2(lKnee2)&&pos.lKneeOff!=null){
@@ -2467,10 +2470,14 @@ async function startRecording(){
   function drawComp(){
     if(!_compDrawing) return;
     // [FIX-3] 파일 모드: 비디오 종료 즉시 캔버스 드로우 중단 → 저장영상 2배 길이 버그 근본 수정
-    if(_srcMode==='file'&&(vid.ended||(vid.duration>0&&vid.currentTime>=vid.duration-0.05))){
+    // [FIX-1] 파일 종료 감지: ended OR currentTime 근접(0.5s) OR 영상 끝에서 paused
+    if(_srcMode==='file'&&(vid.ended
+        ||(vid.duration>0&&isFinite(vid.duration)&&vid.currentTime>=vid.duration-0.5)
+        ||(vid.paused&&vid.currentTime>0&&vid.duration>0&&vid.currentTime>=vid.duration*0.90))){
       _compDrawing=false;
       if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
-      setTimeout(()=>{ if(S.live) stopLive(); else if(S.recorder&&S.recorder.state==='recording') stopRecording(); },50);
+      // setTimeout 없이 즉시 종료 — captureStream이 마지막 프레임을 계속 보내므로 지연 금지
+      if(S.live) stopLive(); else if(S.recorder&&S.recorder.state==='recording') stopRecording();
       return;
     }
     try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
@@ -3193,14 +3200,22 @@ async function startLive(){
   if(_srcMode==='file'){
     const _onVidEnd=()=>{ if(S.live) stopLive(); };
     vid.addEventListener('ended',_onVidEnd,{once:true});
-    // 최대 시간 초과: duration+3초 후에도 살아있으면 강제 종료
-    const _vidDur=vid.duration||0;
-    if(_vidDur>0){
-      const _maxTimer=setTimeout(()=>{ if(S.live) stopLive(); },(_vidDur+3)*1000);
-      // stopLive 시 클리어되도록 S에 보관
-      S._fileMaxTimer=_maxTimer;
-    }
-    // stall 감지: vid.currentTime이 2초 이상 변하지 않으면 재생 재시도
+    // [FIX-1] timeupdate: 재생 위치 기반 종료 감지 (ended 이벤트 미발화 대비)
+    const _onTimeUpdate=()=>{
+      if(!S.live){vid.removeEventListener('timeupdate',_onTimeUpdate);return;}
+      const d=vid.duration;
+      if(vid.ended||(d>0&&isFinite(d)&&vid.currentTime>=d-0.5)){
+        vid.removeEventListener('timeupdate',_onTimeUpdate);
+        if(S.live) stopLive();
+      }
+    };
+    vid.addEventListener('timeupdate',_onTimeUpdate);
+    S._timeupdateEnd=_onTimeUpdate;
+    // 최대 시간 초과: duration+1초 후에도 살아있으면 강제 종료 (Infinity 대비 60s 캡)
+    const _vidDur=vid.duration&&isFinite(vid.duration)?vid.duration:0;
+    const _maxMs=_vidDur>0?(_vidDur+1)*1000:60000;
+    S._fileMaxTimer=setTimeout(()=>{ S._fileMaxTimer=null; if(S.live) stopLive(); },_maxMs);
+    // stall 감지: vid.currentTime이 2초 이상 변하지 않으면 강제 종료
     let _lastVidTime=-1,_stallCount=0;
     S._stallInterval=setInterval(()=>{
       if(!S.live){clearInterval(S._stallInterval);return;}
@@ -3222,6 +3237,7 @@ function stopLive(){
   // 파일 모드 안전장치 클리어
   if(S._fileMaxTimer){clearTimeout(S._fileMaxTimer);S._fileMaxTimer=null;}
   if(S._stallInterval){clearInterval(S._stallInterval);S._stallInterval=null;}
+  if(S._timeupdateEnd){vid.removeEventListener('timeupdate',S._timeupdateEnd);S._timeupdateEnd=null;}
   S.live=false;
   if(S.raf){cancelAnimationFrame(S.raf);S.raf=null;}
   if(_srcMode==='file') vid.pause();
@@ -3946,9 +3962,10 @@ function drawPosOverlay(kps, pos){
     const mid={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
     ctx.beginPath();ctx.arc(mid.x,mid.y,5,0,Math.PI*2);ctx.fillStyle=trunkCol;ctx.fill();
     if(pos.trunkLean!=null){
-      const _xf=S.dir==='back'?1:-1;
+      const _xf=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1); // [FIX-2] frontFlip 반영
       const dv=pos.trunkLean*_xf,side=dv>0?'우 ':'좌 ';
-      ctx.font='bold 18px -apple-system,sans-serif';
+      const _fsT=Math.max(14,Math.round(cvs.height*0.019));
+      ctx.font=`bold ${_fsT}px -apple-system,sans-serif`;
       ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;ctx.textAlign='left';
       ctx.strokeText(side+Math.abs(pos.trunkLean)+'°',mid.x+10,mid.y-4);
       ctx.fillStyle=trunkCol;
@@ -3987,35 +4004,37 @@ function drawPosOverlay(kps, pos){
   }
   kneeLine(lHip,lKnee,lAnk);
   kneeLine(rHip,rKnee,rAnk);
-  // ⑥ 관절 레이블 (어깨/골반/무릎 수치)
+  // ⑥ 관절 레이블 (어깨/골반/무릎 수치) — [FIX-2] frontFlip 반영
   ctx.textAlign='left';
+  const _xfPO=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1);
+  const _fsPO=Math.max(14,Math.round(cvs.height*0.019));
   if(ok(lSh)&&ok(rSh)&&pos.shoulderTilt!=null){
     const mSh2=coverXY({x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2,score:1});
-    const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓',t=side+Math.abs(v)+'°';
+    const v=pos.shoulderTilt,side=(v*_xfPO)>0?'우↓':'좌↓',t=side+Math.abs(v)+'°';
     const sc=posCol('shoulderTilt');
-    ctx.font='bold 18px -apple-system,sans-serif';
+    ctx.font=`bold ${_fsPO}px -apple-system,sans-serif`;
     ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
     ctx.strokeText(t,mSh2.x-50,mSh2.y-10);ctx.fillStyle=sc;ctx.fillText(t,mSh2.x-50,mSh2.y-10);
   }
   if(ok(lHip)&&ok(rHip)&&pos.hipTilt!=null){
     const mHip2=coverXY({x:(lHip.x+rHip.x)/2,y:(lHip.y+rHip.y)/2,score:1});
-    const v=pos.hipTilt,side=v>0?'우↓':'좌↓',t=side+Math.abs(v)+'°';
+    const v=pos.hipTilt,side=(v*_xfPO)>0?'우↓':'좌↓',t=side+Math.abs(v)+'°';
     const hc=posCol('hipTilt');
-    ctx.font='bold 18px -apple-system,sans-serif';
+    ctx.font=`bold ${_fsPO}px -apple-system,sans-serif`;
     ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
     ctx.strokeText(t,mHip2.x-50,mHip2.y-8);ctx.fillStyle=hc;ctx.fillText(t,mHip2.x-50,mHip2.y-8);
   }
   if(ok(lKnee)&&pos.lKneeOff!=null){
     const p=coverXY(lKnee),v=pos.lKneeOff,t=(v>0?'+':'')+v;
     const lkc=posCol('lKneeOff');
-    ctx.font='bold 18px -apple-system,sans-serif';
+    ctx.font=`bold ${_fsPO}px -apple-system,sans-serif`;
     ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
     ctx.strokeText(t,p.x-46,p.y-6);ctx.fillStyle=lkc;ctx.fillText(t,p.x-46,p.y-6);
   }
   if(ok(rKnee)&&pos.rKneeOff!=null){
     const p=coverXY(rKnee),v=pos.rKneeOff,t=(v>0?'+':'')+v;
     const rkc=posCol('rKneeOff');
-    ctx.font='bold 18px -apple-system,sans-serif';
+    ctx.font=`bold ${_fsPO}px -apple-system,sans-serif`;
     ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
     ctx.strokeText(t,p.x+8,p.y-6);ctx.fillStyle=rkc;ctx.fillText(t,p.x+8,p.y-6);
   }

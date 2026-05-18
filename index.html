@@ -1327,7 +1327,7 @@ async function _runDetection(){
       const L=TX[CL];
       // zone-badge는 항상 숨김 (분석 중 UI 간소화)
       $('zone-badge').classList.remove('on');
-      if(ref) updateRepOsc(angles,ref);
+      if(ref&&!isFrontal()) updateRepOsc(angles,ref); // 정면/후면은 각도 기반 rep counting 불필요
       S.inZone=inZone;
       if(S.stats&&inZone&&cmp){
         S.stats.zoneFrames++;
@@ -1348,23 +1348,68 @@ async function _runDetection(){
       S.inZone=inZone;
 
       if(isFrontal()){
-        // Frontal: time-based corrective feedback (no zone requirement)
+        // ── 정면/후면: 게이트(시작자세) 설정 시 게이트 기반 피드백 ──────────────
+        // 정면은 위치(position) 기반 분석 → 각도 게이트 대신 cmp(angle) 게이트를
+        // 보조 트리거로만 사용하고, 실제 피드백 내용은 위치 비교(_lastPosCmp) 사용
+        const _fGref=_gateEntryRef[S.ex.id];
         const now2=Date.now();
-        if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak){
-          let fb=null;
-          if(_lastPosCmp&&!posAllGood(_lastPosCmp)){
-            // Has position reference → compare against saved reference
-            fb=posFeedbackStr(_lastPosCmp);
-          } else if(!_lastPosCmp&&_lastPos){
-            // No reference yet → absolute threshold check (hipShift±25, pelvicTilt±18)
-            fb=posAbsFeedback(_lastPos);
+        if(_fGref&&cmp){
+          // 정면 게이트: 각도 편차로 시작자세 감지(각도는 정면에서도 어느 정도 의미 있음)
+          const _fDevGate=getAvgDev(angles,_fGref);
+          const _fInGate=_fDevGate!=null&&_fDevGate<=_GATE_ENTRY_THR;
+          if(_fInGate){
+            if(_gateState==='idle') _gateState='entry';
+            else if(_gateState==='timing'){
+              clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
+              _gateArmed=false;_gateEndDetected=false;_gateState='entry';
+            }
+          } else {
+            if(_gateState==='entry'){
+              _gateState='timing';_gateLastPrimeT=now2;_gateEndDetected=false;
+              _gateArmed=(now2-_lastRepT>=_MIN_REP_MS);
+              if(_gateArmed){
+                clearTimeout(_pendingGateFBTimer);
+                const _fSegMs=(_gateSegmentMs[S.ex.id]||1500);
+                _pendingGateFBTimer=setTimeout(()=>{
+                  if(!_gateArmed) return;
+                  _gateArmed=false;_gateEndDetected=false;_gateState='idle';_lastRepT=Date.now();
+                  S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
+                  S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
+                  setTimeout(()=>{
+                    if(S.speak) return;
+                    // 정면 피드백은 위치 비교 우선, 없으면 각도 비교
+                    let _ft=null;
+                    if(_lastPosCmp&&!posAllGood(_lastPosCmp)) _ft=posFeedbackStr(_lastPosCmp);
+                    else if(!_lastPosCmp&&_lastPos) _ft=posAbsFeedback(_lastPos);
+                    else if(_lastCmp){const _fo=overall(_lastCmp);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_lastCmp);if(_ffb){const _fm=TX[CL].FB[_ffb.key];if(_fm)_ft=_fm[_ffb.st]||_fm.warn;}}}
+                    if(_ft){speak(_ft);S.lastFB=Date.now();}
+                  },_GATE_FB_DELAY);
+                },_fSegMs+500);
+              }
+            } else if(_gateState==='timing'){
+              if(now2-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
+                clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
+                _gateArmed=false;_gateEndDetected=false;_gateState='idle';
+              }
+            }
           }
-          if(fb){speak(fb);S.lastFB=now2;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
-          else if((_lastPosCmp&&posAllGood(_lastPosCmp))||(!_lastPosCmp&&_lastPos)){
-            if(now2-S.lastPr>9000){
-              const PR=TX[CL].PRAISE;
-              speak(PR[Math.floor(Math.random()*PR.length)]);
-              S.lastPr=now2;
+        } else {
+          // 게이트 없음: 시간 기반 피드백 (2500ms마다)
+          if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak){
+            let fb=null;
+            if(_lastPosCmp&&!posAllGood(_lastPosCmp)){
+              fb=posFeedbackStr(_lastPosCmp);
+            } else if(!_lastPosCmp&&_lastPos){
+              fb=posAbsFeedback(_lastPos);
+            }
+            if(fb){speak(fb);S.lastFB=now2;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
+            else if((_lastPosCmp&&posAllGood(_lastPosCmp))||(!_lastPosCmp&&_lastPos)){
+              S.lastFB=now2; // 칭찬이어도 lastFB 갱신 → 이중발화 방지
+              if(now2-S.lastPr>9000){
+                const PR=TX[CL].PRAISE;
+                speak(PR[Math.floor(Math.random()*PR.length)]);
+                S.lastPr=now2;
+              }
             }
           }
         }
@@ -1990,11 +2035,12 @@ function updateRepOsc(angles,ref){
       $('rep-badge').classList.add('on');
       _oscLastMinT=now;
       _oscLastMax=p.dev; // reset max tracking from this point
-      // 새 rep 시작 시 피드백 즉시 리셋
-      S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
       // ── 게이트 피드백: 끝 자세 도달 감지 시 1회 발화 ──────────────────
-      // _gateArmed=true (시작 자세 이탈 후 대기 중) + 측면 뷰 + 기준 자세 있음
+      // _gateArmed=true (시작 자세 이탈 후 대기 중) + 기준 자세 있음
+      // 주의: speechSynthesis.cancel()은 게이트 발화 직전에만 실행
+      //       (게이트 없는 단순 렙카운트 시 진행 중인 음성을 끊지 않음)
       if(_gateArmed&&_lastCmp){
+        S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){} // 발화 직전에만 취소
         clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null; // 백업 타이머 취소
         _gateArmed=false; _gateEndDetected=false; // 즉시 소비 → 이중 발화 방지
         _gateState='idle';

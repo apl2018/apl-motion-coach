@@ -1066,7 +1066,7 @@ function extractAngles(kps){
     knee:(v=>v!==null?180-v:null)(angle3(hp,kn,an)),
     hip:(v=>v!==null?180-v:null)(angle3(sh,hp,kn)),
     trunk:angleV(mSh,mHp),
-    spine:angle3(kps[0],mSh,mHp),
+    spine:(v=>v!==null?180-v:null)(angle3(kps[0],mSh,mHp)), // [BUG6-FIX] 0°=중립, 앞으로 기울수록 증가
     shoulder:angle3(el,sh,hp),   // 어깨 굴곡 각도 (상완 vs 체간)
     elbow:angle3(sh,el,wr)       // 팔꿈치 굴곡 각도
   };
@@ -1213,18 +1213,18 @@ function drawFrame(kps,cmp){
       const st=pcmp&&pcmp[key]?pcmp[key].st:'unk';
       return ST_COL_POS[st]||'#fff';
     }
-    // [FIX-2] 정면 좌우 표기에 frontFlip 반영: 카메라 기준 → 신체 기준 방향 변환
-    const _xfD=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1);
+    // [FIX-2] 값이 source에서 정규화됨: positive=신체 우측. 직접 부호 사용
+    const _xfD=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1); // knee swap에만 사용
     // 어깨 기울기 — 어깨 연결선 중앙 위
     if(ok(lSh)&&ok(rSh)&&pos.shoulderTilt!=null){
       const mSh=coverXY({x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2,score:1});
-      const v=pos.shoulderTilt,side=(v*_xfD)>0?'우↓':'좌↓';
+      const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓';
       _drawFrontLbl(mSh.x-18,mSh.y-12,side+Math.abs(v)+'°',_posCol('shoulderTilt'));
     }
     // 골반 기울기 — 골반 연결선 중앙 위
     if(ok(lHip)&&ok(rHip)&&pos.hipTilt!=null){
       const mHip=coverXY({x:(lHip.x+rHip.x)/2,y:(lHip.y+rHip.y)/2,score:1});
-      const v=pos.hipTilt,side=(v*_xfD)>0?'우↓':'좌↓';
+      const v=pos.hipTilt,side=v>0?'우↓':'좌↓';
       _drawFrontLbl(mHip.x-18,mHip.y-8,side+Math.abs(v)+'°',_posCol('hipTilt'));
     }
     // 무릎 오프셋 — 각 무릎 옆
@@ -1351,11 +1351,31 @@ async function _runDetection(){
       _lastKps=kps;_kpsTs=Date.now();
       if(isFrontal()){
         const pos=extractPositions(kps);
+        // [BUG3-FIX v2] 해부학적 방향 정규화: positive=신체오른쪽 기울기
+        // 전면카메라(flipHorizontal:true) → MoveNet 이미 해부학 좌표 → factor=1
+        // 후면/환경카메라(flipHorizontal:false) + 정면분석(front) → 화면오른쪽=신체왼쪽 → factor=-1
+        // 후면분석(back) → 화면오른쪽=신체오른쪽 → factor=1
+        const _pNorm=(isUser?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
+        if(pos&&_pNorm<0){
+          if(pos.trunkLean!=null) pos.trunkLean=-pos.trunkLean;
+          if(pos.shoulderTilt!=null) pos.shoulderTilt=-pos.shoulderTilt;
+          if(pos.hipTilt!=null) pos.hipTilt=-pos.hipTilt;
+          if(pos.hipShift!=null) pos.hipShift=-pos.hipShift;
+        }
         _lastPos=pos;
         const posRef=_posRef[S.ex.id]||null;
         _lastPosCmp=posRef?comparePos(pos,posRef):null;
         if(pos) pushPosHistory(pos);
-        // 정면/후면 자세 지표 통계 누적
+        // [BUG5-FIX] 기준자세 타이밍 최적 프레임 추적 (Issue5: per-rep snapshot 점수)
+        if(_gateState==='timing'&&pos){
+          const _devSum=_lastPosCmp?Object.values(_lastPosCmp).reduce((s,v)=>s+Math.abs(v.dev||0),0):Infinity;
+          if(_devSum<_bestTimingPosDevSoFar){
+            _bestTimingPosDevSoFar=_devSum;
+            _bestTimingPos={...pos};
+            _bestTimingCmp=_lastPosCmp?{..._lastPosCmp}:null;
+          }
+        }
+        // 정면/후면 자세 지표 통계 누적 (전체 timing 프레임: fallback용)
         // [BUG2-FIX] 기준자세 범위(timing) 안에서만 누적 — 시작자세 대기 구간 제외
         const _fGref2=_gateEntryRef[S.ex.id];
         const _inScoreZone=!_fGref2||_gateState==='timing';
@@ -1363,6 +1383,7 @@ async function _runDetection(){
           const PM=S.stats.posMetrics;
           const cmpP=_lastPosCmp;
           for(const k of ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff']){
+            if(!S.jointSel[POS_JOINT_MAP[k]]) continue; // [BUG5-FIX] 선택된 관절만
             const v=pos[k];if(v==null) continue;
             PM[k].sum+=v;PM[k].cnt++;
             let st;
@@ -1418,6 +1439,11 @@ async function _runDetection(){
               clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
               // [BUG6] 정면: 시작자세 복귀 = 렙 완료 → MIN_REP_MS 이상이면 즉시 피드백
               if(_gateArmed&&(now2-_gateLastPrimeT)>=_MIN_REP_MS&&_lastCmp){
+                // [Issue5 FIX] 렙 완료 시 best-frame 스냅샷 저장
+                if(_bestTimingPos!=null){
+                  _repPosSnapshots.push({pos:{..._bestTimingPos},cmp:_bestTimingCmp?{..._bestTimingCmp}:null});
+                }
+                _bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity;
                 _gateArmed=false;_gateEndDetected=false;_lastRepT=now2;_gateState='entry';
                 S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
                 const _gRet2=_lastCmp;
@@ -1429,25 +1455,11 @@ async function _runDetection(){
             if(_gateState==='entry'){
               _gateState='timing';_gateLastPrimeT=now2;_gateEndDetected=false;
               _gateArmed=(now2-_lastRepT>=_MIN_REP_MS);
+              // [Issue4 FIX] 정면 분석 이중발화 방지: 백업 타이머 제거
+              // 피드백은 시작자세 복귀 감지(위 timing→entry 전환)에서만 발화
+              // _GATE_PRIME_TIMEOUT(12s) 초과 시 idle 복귀는 아래 else-if에서 처리
               if(_gateArmed){
-                clearTimeout(_pendingGateFBTimer);
-                const _fSegMs=(_gateSegmentMs[S.ex.id]||1500);
-                _pendingGateFBTimer=setTimeout(()=>{
-                  if(!_gateArmed) return;
-                  _gateArmed=false;_gateEndDetected=false;_gateState='idle';_lastRepT=Date.now();
-                  S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
-                  S.lastFB=Date.now();S.speak=false;try{speechSynthesis.cancel();}catch(e){} // [BUG4-FIX] 0→now: 이중발화 방지
-                  setTimeout(()=>{
-                    if(S.speak) return;
-                    // 정면 피드백은 위치 비교 우선, 없으면 각도 비교
-                    let _ft=null;
-                    if(_lastPosCmp&&!posAllGood(_lastPosCmp)) _ft=posFeedbackStr(_lastPosCmp);
-                    else if(!_lastPosCmp&&_lastPos) _ft=posAbsFeedback(_lastPos);
-                    else if(_lastCmp){const _fo=overall(_lastCmp);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_lastCmp);if(_ffb){const _fm=getFBMsg(_ffb);if(_fm)_ft=_fm;}}}
-                    if(_ft){speak(_ft);}
-                    S.lastFB=Date.now(); // [BUG5] _ft 없어도 갱신
-                  },_GATE_FB_DELAY);
-                },_fSegMs+500);
+                clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null;
               }
             } else if(_gateState==='timing'){
               if(now2-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
@@ -1790,7 +1802,17 @@ async function saveRefFrame(){
     const fpv=$('fp-vid');
     if(fpv){
       const pKps=_fpPoses?_fpPoses.keypoints:null;
-      if(pKps){const pRef=extractPositions(pKps);if(pRef){_posRef[S.ex.id]=pRef;
+      if(pKps){const pRef=extractPositions(pKps);if(pRef){
+        // [FIX-2] 기준자세도 동일한 정규화 적용: positive=신체 우측
+        const _isUserRef=S.facingMode==='user';
+        const _pNormRef=(_isUserRef?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
+        if(_pNormRef<0){
+          if(pRef.trunkLean!=null) pRef.trunkLean=-pRef.trunkLean;
+          if(pRef.shoulderTilt!=null) pRef.shoulderTilt=-pRef.shoulderTilt;
+          if(pRef.hipTilt!=null) pRef.hipTilt=-pRef.hipTilt;
+          if(pRef.hipShift!=null) pRef.hipShift=-pRef.hipShift;
+        }
+        _posRef[S.ex.id]=pRef;
         try{localStorage.setItem('apl_posref_'+S.ex.id,JSON.stringify({pos:pRef,dir:S.dir,at:new Date().toISOString()}));}catch(e){}}}
     }
   }
@@ -2063,6 +2085,11 @@ let _gateEndVideoT = {};
 // _gateEndDetected: 끝자세 감지 후 중복 트리거 방지 플래그
 let _gateArmed = false;
 let _gateEndDetected = false;
+// [BUG5-FIX] per-rep 최적 프레임 스냅샷 (기준자세 타이밍 점수 정밀화)
+let _repPosSnapshots = [];
+let _bestTimingPos = null;
+let _bestTimingCmp = null;
+let _bestTimingPosDevSoFar = Infinity;
 const _GATE_END_THR = 30; // 끝 자세 인식 임계값 (평균 편차 °)
 
 function getAvgDev(angles,ref){
@@ -2142,6 +2169,7 @@ function resetRepOsc(){
 
 // ── RECORDING ─────────────────────────────────────────────────────────────────
 let _compDrawing=false;
+let _lastDrawCompVidTime=-1; // [Issue1 FIX] frozen frame 방지: 마지막 드로우 시점 videoTime
 let _lastKps=null,_lastCmp=null,_lastAngles=null;
 let _prevKps=null,_kpsTs=0,_prevKpsTs=0; // for skeleton interpolation
 let _coachOverlay=null; // {text, until}
@@ -2306,10 +2334,8 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       const mid2={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
       ctx2.beginPath();ctx2.arc(mid2.x,mid2.y,5,0,Math.PI*2);ctx2.fillStyle=tc;ctx2.fill();
       if(pos.trunkLean!=null){
-        // [BUG3-FIX] flipHorizontal 여부로 trunkLean 방향 결정
-        const _isFlippedH2=_srcMode==='camera'&&S.facingMode==='user';
-        const _xf2=(_isFlippedH2?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
-        const dv2=pos.trunkLean*_xf2,side2=dv2>0?'우 ':'좌 ';
+        // [BUG3-FIX v2] 소스 정규화 → 직접 사용 (양수=신체오른쪽)
+        const side2=pos.trunkLean>0?'우 ':'좌 ';
         ctx2.textAlign='left';
         _lbl2(mid2.x+10,mid2.y-4,side2+Math.abs(pos.trunkLean)+'°',tc);
       }
@@ -2520,6 +2546,12 @@ async function startRecording(){
 
   function drawComp(){
     if(!_compDrawing) return;
+    // [Issue1 FIX] 파일 모드: currentTime이 변하지 않으면(frozen frame) 드로우 스킵
+    if(_srcMode==='file'&&vid.currentTime>0){
+      const _ct=vid.currentTime;
+      if(_ct===_lastDrawCompVidTime) return; // 동일 프레임 중복 캡처 방지
+      _lastDrawCompVidTime=_ct;
+    }
     // [FIX-3] 파일 모드: 비디오 종료 즉시 캔버스 드로우 중단 → 저장영상 2배 길이 버그 근본 수정
     // [FIX-1] 파일 종료 감지: ended OR currentTime 근접(0.5s) OR 영상 끝에서 paused
     if(_srcMode==='file'&&(vid.ended
@@ -2584,6 +2616,7 @@ async function startRecording(){
 
   // setInterval(33ms) = 30fps: rAF와 독립 → TF.js rAF 지연에 영향 안받음
   _compDrawing=true;
+  _lastDrawCompVidTime=-1; // [Issue1 FIX] 새 녹화 시작 시 리셋
   try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
   S.drawCompInterval=setInterval(drawComp,33);
 
@@ -3233,6 +3266,7 @@ async function startLive(){
   _gateState='idle';_gateLastPrimeT=0;_gateWasInZone=false;_gateSpeechSkip=false;_lastRepT=0;_pendingGateFB=null;
   _gateArmed=false; _gateEndDetected=false;
   if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
+  _repPosSnapshots=[];_bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity; // [BUG5-FIX]
   resetRepOsc();
   // ── detection 상태 완전 초기화: _detPending이 이전 세션에서 stuck true로 남는 버그 방지
   _detPending=false; _lastDet=0;
@@ -3262,7 +3296,13 @@ async function startLive(){
   // ── 파일 모드: ended 이벤트로 즉시 중단 + 최대시간 초과 안전장치 ────────────
   // loop()의 vid.ended 폴링만으로는 stall/버퍼링 시 감지 실패 → 녹화가 원본보다 2배로 길어짐
   if(_srcMode==='file'){
-    const _onVidEnd=()=>{ if(S.live) stopLive(); };
+    const _onVidEnd=()=>{
+      // [Issue1 FIX] compStream 즉시 중단 → frozen frame이 recorder에 쌓이는 것 방지
+      _compDrawing=false;
+      if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
+      if(S.compStream){S.compStream.getVideoTracks().forEach(t=>{try{t.stop();}catch(e){}});S.compStream=null;}
+      if(S.live) stopLive();
+    };
     vid.addEventListener('ended',_onVidEnd,{once:true});
     // [FIX-1] timeupdate: 재생 위치 기반 종료 감지 (ended 이벤트 미발화 대비)
     const _onTimeUpdate=()=>{
@@ -3361,20 +3401,44 @@ function showSummary(elapsed){
     const posUnit={shoulderTilt:'°',hipTilt:'°',trunkLean:'°',hipShift:'%',lKneeOff:'%',rKneeOff:'%'};
     // 선택된 관절만 포함 (POS_JOINT_MAP 기준)
     const selPosKeys=posKeys.filter(k=>S.jointSel[POS_JOINT_MAP[k]]!==false);
-    // [점수 개선] 가중 평균: good=1.0, warn=0.7, crit=0.4 → 기본 점수 상향
-    // 피드백 발생 여부와 무관하게 각 프레임의 각도/위치 오차를 종합 평가
+    // [Issue5 FIX] per-rep 스냅샷 기반 점수 (기준자세 타이밍 ±0.1s best frame)
+    // 스냅샷 없으면 전체 프레임 누적 통계(PM) fallback
     let totalW=0,totalAll=0;
-    for(const k of selPosKeys){const m=PM[k];totalW+=m.g*1.0+m.w*0.7+m.c*0.4;totalAll+=m.g+m.w+m.c;}
+    let _useSnap=_repPosSnapshots&&_repPosSnapshots.length>0;
+    const repStats={};
+    for(const k of selPosKeys) repStats[k]={g:0,w:0,c:0,devSum:0,cnt:0};
+    if(_useSnap){
+      for(const snap of _repPosSnapshots){
+        for(const k of selPosKeys){
+          const ce=snap.cmp&&snap.cmp[k];if(!ce) continue;
+          const st2=ce.st;
+          if(st2==='good') repStats[k].g++;
+          else if(st2==='warn') repStats[k].w++;
+          else repStats[k].c++;
+          repStats[k].devSum+=Math.abs(ce.dev||0);repStats[k].cnt++;
+        }
+      }
+      for(const k of selPosKeys){const rs=repStats[k];totalW+=rs.g*1.0+rs.w*0.7+rs.c*0.4;totalAll+=rs.g+rs.w+rs.c;}
+    } else {
+      for(const k of selPosKeys){const m=PM[k];totalW+=m.g*1.0+m.w*0.7+m.c*0.4;totalAll+=m.g+m.w+m.c;}
+    }
     const pct=totalAll>0?Math.max(35,Math.round(totalW/totalAll*100)):0;
     scoreEl.textContent=pct+'점';
     scoreEl.className='sum-score-num '+(pct>=75?'good':pct>=50?'warn':'crit');
-    $('sum-score-lbl').innerHTML='자세 안정성<br><span style="font-size:11px">총 '+st.totalFrames+'프레임 분석</span>';
+    const _snapLbl=_useSnap?'총 '+_repPosSnapshots.length+'회 분석':'총 '+st.totalFrames+'프레임 분석';
+    $('sum-score-lbl').innerHTML='자세 안정성<br><span style="font-size:11px">'+_snapLbl+'</span>';
     $('sum-joints-lbl').textContent='항목별 자세 분석';
     for(const k of selPosKeys){
-      const pm=PM[k];if(pm.cnt===0) continue;
-      const tot=pm.g+pm.w+pm.c||1;
-      const gp=Math.round(pm.g/tot*100),wp=Math.round(pm.w/tot*100),cp=100-gp-wp;
-      const avg=Math.round(Math.abs(pm.sum/pm.cnt)*10)/10;
+      let g,w,c,avg;
+      if(_useSnap){
+        const rs=repStats[k];if(rs.cnt===0) continue;
+        g=rs.g;w=rs.w;c=rs.c;avg=Math.round(rs.devSum/rs.cnt*10)/10;
+      } else {
+        const pm=PM[k];if(pm.cnt===0) continue;
+        g=pm.g;w=pm.w;c=pm.c;avg=Math.round(Math.abs(pm.sum/pm.cnt)*10)/10;
+      }
+      const tot=g+w+c||1;
+      const gp=Math.round(g/tot*100),wp=Math.round(w/tot*100),cp=100-gp-wp;
       const div=document.createElement('div');div.className='bar-row';
       div.innerHTML=`<span class="bar-name" style="width:58px;font-size:11px">${posLbls[k]}</span><div class="bar-track"><div class="bar-g" style="width:${gp}%"></div><div class="bar-w" style="width:${wp}%"></div><div class="bar-c" style="width:${cp}%"></div></div><span class="bar-pct" style="width:42px;font-size:10px">±${avg}${posUnit[k]}</span>`;
       bars.appendChild(div);
@@ -3812,30 +3876,23 @@ function posAbsFeedback(pos){
   if(!pos) return null;
   const ABS={shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:20, lKneeOff:22, rKneeOff:22};
   const sel=k=>S.jointSel[POS_JOINT_MAP[k]!==undefined?POS_JOINT_MAP[k]:k]!==false;
-  // [BUG3-FIX] flipHorizontal=true 시 좌/우 부호 이미 신체기준 → _xFlip=1
-  const _isFlippedHAbs=_srcMode==='camera'&&S.facingMode==='user';
-  const _xFlip=(_isFlippedHAbs?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
+  // [BUG3-FIX v2] 소스 정규화 완료 → 직접 부호 사용 (양수=신체오른쪽)
   // ① 골반 좌우 위치(hipShift) 최우선
   if(sel('hipShift')&&pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift){
-    const _d=pos.hipShift*_xFlip;
-    return _d>0?'골반 왼쪽으로!':'골반 오른쪽으로!';
+    return pos.hipShift>0?'골반 왼쪽으로!':'골반 오른쪽으로!';
   }
   // ② 나머지 지표
   const msgs=[];
   if(sel('shoulderTilt')&&pos.shoulderTilt!=null&&Math.abs(pos.shoulderTilt)>ABS.shoulderTilt)
-    msgs.push({text:pos.shoulderTilt*_xFlip>0?'오른쪽 어깨 올려':'왼쪽 어깨 올려',v:Math.abs(pos.shoulderTilt)});
+    msgs.push({text:pos.shoulderTilt>0?'오른쪽 어깨 올려':'왼쪽 어깨 올려',v:Math.abs(pos.shoulderTilt)});
   if(sel('hipTilt')&&pos.hipTilt!=null&&Math.abs(pos.hipTilt)>ABS.hipTilt)
-    msgs.push({text:pos.hipTilt*_xFlip>0?'오른쪽골반 떨어졌어':'왼쪽골반 떨어졌어',v:Math.abs(pos.hipTilt)});
+    msgs.push({text:pos.hipTilt>0?'오른쪽골반 떨어졌어':'왼쪽골반 떨어졌어',v:Math.abs(pos.hipTilt)});
   if(sel('trunkLean')&&pos.trunkLean!=null&&Math.abs(pos.trunkLean)>ABS.trunkLean)
-    msgs.push({text:pos.trunkLean*_xFlip>0?'상체 왼쪽으로 세워':'상체 오른쪽으로 세워',v:Math.abs(pos.trunkLean)});
-  if(sel('lKneeOff')&&pos.lKneeOff!=null&&Math.abs(pos.lKneeOff)>ABS.lKneeOff){
-    const _lk=pos.lKneeOff*(-_xFlip);
-    msgs.push({text:_lk<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로',v:Math.abs(pos.lKneeOff)});
-  }
-  if(sel('rKneeOff')&&pos.rKneeOff!=null&&Math.abs(pos.rKneeOff)>ABS.rKneeOff){
-    const _rk=pos.rKneeOff*_xFlip;
-    msgs.push({text:_rk<0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로',v:Math.abs(pos.rKneeOff)});
-  }
+    msgs.push({text:pos.trunkLean>0?'상체 왼쪽으로 세워':'상체 오른쪽으로 세워',v:Math.abs(pos.trunkLean)});
+  if(sel('lKneeOff')&&pos.lKneeOff!=null&&Math.abs(pos.lKneeOff)>ABS.lKneeOff)
+    msgs.push({text:pos.lKneeOff<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로',v:Math.abs(pos.lKneeOff)});
+  if(sel('rKneeOff')&&pos.rKneeOff!=null&&Math.abs(pos.rKneeOff)>ABS.rKneeOff)
+    msgs.push({text:pos.rKneeOff<0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로',v:Math.abs(pos.rKneeOff)});
   if(!msgs.length) return null;
   return msgs.sort((a,b)=>b.v-a.v)[0].text;
 }
@@ -3848,17 +3905,13 @@ function posAllGood(cmp){
 
 function posFeedbackStr(cmp){
   if(!cmp) return null;
-  // [BUG3-FIX] flipHorizontal=true(전면카메라) 시 신체기준 좌/우 → xFlip=1
-  const _isFlippedHFB=_srcMode==='camera'&&S.facingMode==='user';
-  const xFlip=(_isFlippedHFB?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
+  // [BUG3-FIX v2] 소스 정규화 완료 → dev 부호 직접 사용 (양수=신체오른쪽 편차)
   const sel = k => S.jointSel[POS_JOINT_MAP[k]]!==false;
   const {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff} = cmp;
-  // ① 골반 좌우 위치(hipShift) 최우선 — 기울기(hipTilt)보다 먼저 확인
-  if(sel('hipShift')&&hipShift&&hipShift.dev!=null&&hipShift.st!=='good'){
-    const d = hipShift.dev * xFlip;
-    return d>0?'골반 왼쪽으로!':'골반 오른쪽으로!';
-  }
-  // ② 나머지 지표 (hipShift 정상일 때만 hipTilt 등 확인)
+  // ① 골반 좌우 위치(hipShift) 최우선
+  if(sel('hipShift')&&hipShift&&hipShift.dev!=null&&hipShift.st!=='good')
+    return hipShift.dev>0?'골반 왼쪽으로!':'골반 오른쪽으로!';
+  // ② 나머지 지표
   const msgs = [];
   if(sel('shoulderTilt')&&shoulderTilt&&shoulderTilt.dev!=null&&shoulderTilt.st!=='good')
     msgs.push({text: shoulderTilt.dev>0?'오른쪽 어깨 올려':'왼쪽 어깨 올려', st:shoulderTilt.st});
@@ -3866,14 +3919,10 @@ function posFeedbackStr(cmp){
     msgs.push({text: hipTilt.dev>0?'오른쪽골반 떨어졌어':'왼쪽골반 떨어졌어', st:hipTilt.st});
   if(sel('trunkLean')&&trunkLean&&trunkLean.dev!=null&&trunkLean.st!=='good')
     msgs.push({text: trunkLean.dev>0?'상체 왼쪽으로 세워':'상체 오른쪽으로 세워', st:trunkLean.st});
-  if(sel('lKneeOff')&&lKneeOff&&lKneeOff.dev!=null&&lKneeOff.st!=='good'){
-    const lat = lKneeOff.dev * (-xFlip);
-    msgs.push({text: lat<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로', st:lKneeOff.st});
-  }
-  if(sel('rKneeOff')&&rKneeOff&&rKneeOff.dev!=null&&rKneeOff.st!=='good'){
-    const lat = rKneeOff.dev * xFlip;
-    msgs.push({text: lat<0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로', st:rKneeOff.st});
-  }
+  if(sel('lKneeOff')&&lKneeOff&&lKneeOff.dev!=null&&lKneeOff.st!=='good')
+    msgs.push({text: lKneeOff.dev<0?'왼 무릎 좀더 바깥으로':'왼 무릎 좀더 안으로', st:lKneeOff.st});
+  if(sel('rKneeOff')&&rKneeOff&&rKneeOff.dev!=null&&rKneeOff.st!=='good')
+    msgs.push({text: rKneeOff.dev<0?'오른 무릎 좀더 바깥으로':'오른 무릎 좀더 안으로', st:rKneeOff.st});
   if(!msgs.length) return null;
   const worst = msgs.find(m=>m.st==='crit')||msgs.find(m=>m.st==='warn')||msgs[0];
   return worst.text;
@@ -4031,11 +4080,8 @@ function drawPosOverlay(kps, pos){
     const mid={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
     ctx.beginPath();ctx.arc(mid.x,mid.y,5,0,Math.PI*2);ctx.fillStyle=trunkCol;ctx.fill();
     if(pos.trunkLean!=null){
-      // [BUG3-FIX] flipHorizontal=true(전면카메라) 시 trunkLean 부호 이미 신체기준 → _xf=1
-      // flipHorizontal=false(후면카메라) 시 back=1, front(후면렌즈)=-1
-      const _isFlippedH3=_srcMode==='camera'&&S.facingMode==='user';
-      const _xf=(_isFlippedH3?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
-      const dv=pos.trunkLean*_xf,side=dv>0?'우 ':'좌 ';
+      // [BUG3-FIX v2] 소스에서 정규화됨 → _xf=1 항상 (양수=신체오른쪽 기울기)
+      const dv=pos.trunkLean,side=dv>0?'우 ':'좌 ';
       const _fsT=12; // 라이브 화면 - 고정 12px
       ctx.font=`bold ${_fsT}px -apple-system,sans-serif`;
       ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;ctx.textAlign='left';

@@ -1356,7 +1356,10 @@ async function _runDetection(){
         _lastPosCmp=posRef?comparePos(pos,posRef):null;
         if(pos) pushPosHistory(pos);
         // 정면/후면 자세 지표 통계 누적
-        if(pos&&S.stats){
+        // [BUG2-FIX] 기준자세 범위(timing) 안에서만 누적 — 시작자세 대기 구간 제외
+        const _fGref2=_gateEntryRef[S.ex.id];
+        const _inScoreZone=!_fGref2||_gateState==='timing';
+        if(_inScoreZone&&pos&&S.stats){
           const PM=S.stats.posMetrics;
           const cmpP=_lastPosCmp;
           for(const k of ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff']){
@@ -1418,7 +1421,7 @@ async function _runDetection(){
                 _gateArmed=false;_gateEndDetected=false;_lastRepT=now2;_gateState='entry';
                 S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
                 const _gRet2=_lastCmp;
-                S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
+                S.lastFB=now2;S.speak=false;try{speechSynthesis.cancel();}catch(e){} // [BUG4-FIX] 0→now2: 이중발화 방지
                 setTimeout(()=>{if(S.speak)return;let _ft=null;if(_lastPosCmp&&!posAllGood(_lastPosCmp))_ft=posFeedbackStr(_lastPosCmp);else if(!_lastPosCmp&&_lastPos)_ft=posAbsFeedback(_lastPos);else if(_gRet2){const _fo=overall(_gRet2);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_gRet2);if(_ffb){const _fm=getFBMsg(_ffb);if(_fm)_ft=_fm;}}}if(_ft){speak(_ft);}S.lastFB=Date.now();},_GATE_FB_DELAY);
               }else{_gateArmed=false;_gateEndDetected=false;_gateState='entry';}
             }
@@ -1433,7 +1436,7 @@ async function _runDetection(){
                   if(!_gateArmed) return;
                   _gateArmed=false;_gateEndDetected=false;_gateState='idle';_lastRepT=Date.now();
                   S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
-                  S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
+                  S.lastFB=Date.now();S.speak=false;try{speechSynthesis.cancel();}catch(e){} // [BUG4-FIX] 0→now: 이중발화 방지
                   setTimeout(()=>{
                     if(S.speak) return;
                     // 정면 피드백은 위치 비교 우선, 없으면 각도 비교
@@ -2303,8 +2306,9 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       const mid2={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
       ctx2.beginPath();ctx2.arc(mid2.x,mid2.y,5,0,Math.PI*2);ctx2.fillStyle=tc;ctx2.fill();
       if(pos.trunkLean!=null){
-        // [FIX-2] frontFlip 반영: 카메라 기준 → 신체 기준 방향 변환
-        const _xf2=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1);
+        // [BUG3-FIX] flipHorizontal 여부로 trunkLean 방향 결정
+        const _isFlippedH2=_srcMode==='camera'&&S.facingMode==='user';
+        const _xf2=(_isFlippedH2?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
         const dv2=pos.trunkLean*_xf2,side2=dv2>0?'우 ':'좌 ';
         ctx2.textAlign='left';
         _lbl2(mid2.x+10,mid2.y-4,side2+Math.abs(pos.trunkLean)+'°',tc);
@@ -2912,9 +2916,9 @@ async function saveRecording(chunks,wallMs){
   const ext=isMP4?'mp4':'webm';
   const saveMime=isMP4?'video/mp4':'video/webm';
   const rawBlob=new Blob(chunks,{type:saveMime});
-  // iOS: fix fMP4 timestamps (wrong trun durations → 100x speed)
-  const _isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const blob=_isIOS?await patchMP4Timestamps(rawBlob,wallMs||0):rawBlob;
+  // [BUG1-FIX] 모든 플랫폼에서 MP4 타임스탬프 보정 → 저장영상 2배속 버그 해결
+  // 기존: iOS만 적용. 수정: isMP4&wallMs>0 이면 항상 적용 (Android Chrome MP4도 동일 문제)
+  const blob=(isMP4&&(wallMs||0)>0)?await patchMP4Timestamps(rawBlob,wallMs||0):rawBlob;
   const now=new Date();
   const stamp=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
   const exName=S.ex.name;
@@ -3808,7 +3812,9 @@ function posAbsFeedback(pos){
   if(!pos) return null;
   const ABS={shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:20, lKneeOff:22, rKneeOff:22};
   const sel=k=>S.jointSel[POS_JOINT_MAP[k]!==undefined?POS_JOINT_MAP[k]:k]!==false;
-  const _xFlip=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1); // [FIX-1] 좌우 보정
+  // [BUG3-FIX] flipHorizontal=true 시 좌/우 부호 이미 신체기준 → _xFlip=1
+  const _isFlippedHAbs=_srcMode==='camera'&&S.facingMode==='user';
+  const _xFlip=(_isFlippedHAbs?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
   // ① 골반 좌우 위치(hipShift) 최우선
   if(sel('hipShift')&&pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift){
     const _d=pos.hipShift*_xFlip;
@@ -3842,8 +3848,9 @@ function posAllGood(cmp){
 
 function posFeedbackStr(cmp){
   if(!cmp) return null;
-  // [FIX-1] 카메라 방향 보정: back=그대로, front=반전, frontFlip=수동 반전
-  const xFlip = (S.dir==='back' ? 1 : -1) * (S.frontFlip ? -1 : 1);
+  // [BUG3-FIX] flipHorizontal=true(전면카메라) 시 신체기준 좌/우 → xFlip=1
+  const _isFlippedHFB=_srcMode==='camera'&&S.facingMode==='user';
+  const xFlip=(_isFlippedHFB?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
   const sel = k => S.jointSel[POS_JOINT_MAP[k]]!==false;
   const {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff} = cmp;
   // ① 골반 좌우 위치(hipShift) 최우선 — 기울기(hipTilt)보다 먼저 확인
@@ -4024,7 +4031,10 @@ function drawPosOverlay(kps, pos){
     const mid={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
     ctx.beginPath();ctx.arc(mid.x,mid.y,5,0,Math.PI*2);ctx.fillStyle=trunkCol;ctx.fill();
     if(pos.trunkLean!=null){
-      const _xf=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1); // [FIX-2] frontFlip 반영
+      // [BUG3-FIX] flipHorizontal=true(전면카메라) 시 trunkLean 부호 이미 신체기준 → _xf=1
+      // flipHorizontal=false(후면카메라) 시 back=1, front(후면렌즈)=-1
+      const _isFlippedH3=_srcMode==='camera'&&S.facingMode==='user';
+      const _xf=(_isFlippedH3?1:(S.dir==='back'?1:-1))*(S.frontFlip?-1:1);
       const dv=pos.trunkLean*_xf,side=dv>0?'우 ':'좌 ';
       const _fsT=12; // 라이브 화면 - 고정 12px
       ctx.font=`bold ${_fsT}px -apple-system,sans-serif`;
@@ -4322,7 +4332,7 @@ async function init(){
   try{
     S.det=await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
-      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
+            {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
     );
     if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
     S.ready=true;

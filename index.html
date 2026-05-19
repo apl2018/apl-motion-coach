@@ -4385,6 +4385,12 @@ async function init(){
             const u=URL.createObjectURL(blob);window.open(u,'_blank');
             setTimeout(()=>URL.revokeObjectURL(u),60000);
             alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
+            _clearSave();
+          });
+      } else {
+        const u=URL.createObjectURL(blob);window.open(u,'_blank');
+        setTimeout(()=>URL.revokeObjectURL(u),60000);
+        alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
         _clearSave();
       }
     } else if(navigator.canShare&&navigator.canShare({files:[file]})){

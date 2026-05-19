@@ -2600,6 +2600,8 @@ async function startRecording(){
         const _d=vid.duration;
         if(_frozenCompFrames>=2&&_d>0&&isFinite(_d)&&_ct>=_d*0.5){
           // 66ms 이상 정지 + 영상 50% 이상 진행 → iOS 이벤트 없어도 강제 종료
+          // [FIX-SaveBtn] 200ms _recStartTimer 대기 중이면 종료 연기 (recorder 미시작 방지)
+          if(_recStartTimer) return;
           _compDrawing=false;
           if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
           if(S.compStream){S.compStream.getVideoTracks().forEach(t=>{try{t.stop();}catch(e){}});S.compStream=null;}
@@ -2797,7 +2799,14 @@ function stopRecording(){
         }
       },4000);
     }
-    else if(S.recorder.state==='inactive'&&S.recChunks.length)saveRecording(S.recChunks);
+    else if(S.recorder.state==='inactive'){
+      // [FIX-SaveBtn] inactive: 청크 있으면 직접 저장, 없으면 안전 fallback
+      if(S.recChunks.length)saveRecording(S.recChunks,_recWallMs);
+      else setTimeout(()=>{if(!_pendingSaveBlob)saveRecording([]);},200);
+    }
+  }else{
+    // [FIX-SaveBtn] S.recorder가 null: startRecording() 미완료 → 안전 fallback
+    setTimeout(()=>{if(!_pendingSaveBlob)saveRecording([]);},200);
   }
   // audioStream 정리 (녹화 종료 후)
   if(S.audioStream){S.audioStream.getTracks().forEach(t=>t.stop());S.audioStream=null;
@@ -2981,7 +2990,8 @@ async function patchMP4Timestamps(blob,wallMs){
 async function saveRecording(chunks,wallMs){
   if(!chunks||!chunks.length){
     const _sb=$('btn-sum-save');
-    if(_sb&&_sb.style.display==='none'){
+    // [FIX-SaveBtn] display!=='block' 조건: inline style이 ''(CSS default)인 경우도 처리
+    if(_sb&&_sb.style.display!=='block'){
       _sb.style.display='block';
       _sb.textContent='⚠️ 녹화 저장 실패 (기기 미지원)';
       _sb.style.background='rgba(120,120,120,.6)';

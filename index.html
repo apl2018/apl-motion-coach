@@ -1187,12 +1187,12 @@ function drawFrame(kps,cmp){
     if(!a||!b||a.score<CONF||b.score<CONF) continue;
     const pa=coverXY(a),pb=coverXY(b);
     ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);
-    ctx.strokeStyle='rgba(255,255,255,.70)';ctx.lineWidth=2;ctx.lineCap='round';ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.70)';ctx.lineWidth=1.5;ctx.lineCap='round';ctx.stroke();
   }
   for(const i of [5,6,7,8,11,12,13,14,15,16]){
     const kp=kps[i];if(!kp||kp.score<CONF) continue;
     const p=coverXY(kp);
-    ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);
+    ctx.beginPath();ctx.arc(p.x,p.y,3.5,0,Math.PI*2);
     ctx.fillStyle=kpColor(i,cmp);ctx.fill();
     ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
   }
@@ -1203,7 +1203,7 @@ function drawFrame(kps,cmp){
     const ok=p=>p&&p.score>=CONF;
     const lHip=kps[11],rHip=kps[12],lSh=kps[5],rSh=kps[6];
     const lKnee=kps[13],rKnee=kps[14];
-    const _fsF=12; // 라이브 화면 - 고정 12px (작게)
+    const _fsF=9; // 라이브 화면 - 고정 9px (작게)
     function _drawFrontLbl(x,y,text,col){
       ctx.font=`bold ${_fsF}px -apple-system,sans-serif`;
       ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=2.5;
@@ -1249,7 +1249,7 @@ function drawFrame(kps,cmp){
     // 분석에 사용된 side(S.dir) → 상태 색상(초록/노랑/빨강)
     // 반대쪽 side → 회색 (참고용)
     const useLeft=S.dir!=='right';
-    const _fsA=13; // 라이브 화면 - 고정 13px (작게)
+    const _fsA=10; // 라이브 화면 - 고정 10px (작게)
     // [kpIndex, side('L'|'R'), angleFunc, jointKey, dx, dy]
     const sideMap=[
       {i:13,side:'L',af:()=>{const v=angle3(kps[11],kps[13],kps[15]);return v!==null?180-v:null;},k:'knee',    dx:8, dy:-6},
@@ -1381,19 +1381,8 @@ async function _runDetection(){
         // ① 게이트 있으면 timing 구간만 (시작자세 대기·복귀 구간 제외)
         // ② 기준자세(_posRef) 있으면 근접 프레임만 (각 지표가 POS_THR*2.5 이내)
         const _gateOk=!_fGref2||_gateState==='timing';
-        let _nearRefOk=true;
-        if(_gateOk&&_lastPosCmp){
-          // 기준자세와 비교 결과가 있으면, 전체 지표가 허용 범위 내인 프레임만 포함
-          const _cmpEntries=Object.entries(_lastPosCmp);
-          if(_cmpEntries.length>0){
-            _nearRefOk=_cmpEntries.every(([k,e])=>{
-              if(e.dev==null||e.st==='unk') return true;
-              const t=POS_THR[k]||10;
-              return Math.abs(e.dev)<=t*2.5; // 임계값 2.5배 이내 → 기준자세 근방으로 인정
-            });
-          }
-        }
-        const _inScoreZone=_gateOk&&_nearRefOk;
+        // [Issue4 FIX] _nearRefOk 제거: 너무 엄격해서 score=0 유발. _repPosSnapshots에서 처리
+        const _inScoreZone=_gateOk;
         if(_inScoreZone&&pos&&S.stats){
           const PM=S.stats.posMetrics;
           const cmpP=_lastPosCmp;
@@ -1459,7 +1448,7 @@ async function _runDetection(){
                 _gateInGateStartT=0;
                 clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
                 // [BUG6] 정면: 시작자세 복귀 = 렙 완료 → MIN_REP_MS 이상이면 즉시 피드백
-                if(_gateArmed&&(now2-_gateLastPrimeT)>=_MIN_REP_MS&&_lastCmp){
+                if(_gateArmed&&(now2-_gateLastPrimeT)>=_MIN_REP_MS){
                   // [Issue5 FIX] 렙 완료 시 best-frame 스냅샷 저장
                   if(_bestTimingPos!=null){
                     _repPosSnapshots.push({pos:{..._bestTimingPos},cmp:_bestTimingCmp?{..._bestTimingCmp}:null});
@@ -1547,7 +1536,7 @@ async function _runDetection(){
                   S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
                   const _gRet=_lastCmp;
                   S.lastFB=now3;S.speak=false;try{speechSynthesis.cancel();}catch(e){} // [BUG4-FIX] 0→now3: 이중발화 방지
-                  setTimeout(()=>{if(S.speak)return;let _t=null;const _o=overall(_gRet);if(_o==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好의']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];_t=_gp[Math.floor(Math.random()*_gp.length)];}else{const _fb=primaryFB(_gRet);if(_fb){const _m=getFBMsg(_fb);if(_m)_t=_m;}}if(_t)speak(_t);S.lastFB=Date.now();},_GATE_FB_DELAY);
+                  setTimeout(()=>{if(S.speak)return;let _t=null;const _o=overall(_gRet);if(_o==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];_t=_gp[Math.floor(Math.random()*_gp.length)];}else{const _fb=primaryFB(_gRet);if(_fb){const _m=getFBMsg(_fb);if(_m)_t=_m;}}if(_t)speak(_t);S.lastFB=Date.now();},_GATE_FB_DELAY);
                 }else{_gateArmed=false;_gateEndDetected=false;_gateState='entry';}
               }
               // else: debounce 대기 중

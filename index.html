@@ -1357,7 +1357,8 @@ async function _runDetection(){
         // 카메라 방향 고정 가정 없이 실제 keypoint로 자동 결정
         const _kpLHip=kps[11],_kpRHip=kps[12];
         const _lrKp=(_kpLHip&&_kpRHip)?(_kpLHip.x>_kpRHip.x?-1:1):((isUser?1:(S.dir==='back'?1:-1)));
-        const _pNorm=_lrKp*(S.frontFlip?-1:1);
+        // [FIX-Issue4] frontFlip은 표시용(좌우 레이블)에만 반영, 부호 정규화는 keypoint 기반만
+        const _pNorm=_lrKp;
         if(pos&&_pNorm<0){
           if(pos.trunkLean!=null) pos.trunkLean=-pos.trunkLean;
           // shoulderTilt/hipTilt는 정규화 불필요 (절대y차이로 계산, 부호 항상 정확)
@@ -1838,7 +1839,8 @@ async function saveRefFrame(){
         // [Issue4 FIX v2] 기준자세도 keypoint 기반 자동 부호 결정 (분석과 동일한 로직)
         const _kpLHipR=pKps[11],_kpRHipR=pKps[12];
         const _lrKpRef=(_kpLHipR&&_kpRHipR)?(_kpLHipR.x>_kpRHipR.x?-1:1):((S.facingMode==='user'?1:(S.dir==='back'?1:-1)));
-        const _pNormRef=_lrKpRef*(S.frontFlip?-1:1);
+        // [FIX-Issue4] frontFlip은 표시용에만 반영
+        const _pNormRef=_lrKpRef;
         if(_pNormRef<0){
           if(pRef.trunkLean!=null) pRef.trunkLean=-pRef.trunkLean;
           if(pRef.hipShift!=null) pRef.hipShift=-pRef.hipShift;
@@ -2367,8 +2369,8 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       const mid2={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
       ctx2.beginPath();ctx2.arc(mid2.x,mid2.y,5,0,Math.PI*2);ctx2.fillStyle=tc;ctx2.fill();
       if(pos.trunkLean!=null){
-        // [BUG3-FIX v2] 소스 정규화 → 직접 사용 (양수=신체오른쪽)
-        const side2=pos.trunkLean>0?'우 ':'좌 ';
+        // [FIX-Issue4] frontFlip은 표시용 레이블에만 반영
+        const side2=(pos.trunkLean*(S.frontFlip?-1:1))>0?'우 ':'좌 ';
         ctx2.textAlign='left';
         _lbl2(mid2.x+10,mid2.y-4,side2+Math.abs(pos.trunkLean)+'°',tc);
       }
@@ -3448,7 +3450,8 @@ function showSummary(elapsed){
   if(_pendingSaveBlob){
     if(_sb)_sb.style.display='block'; // 이미 blob 준비됨 → 즉시 표시
   }else{
-    if(_sb)_sb.style.display='none'; // 아직 blob 없음 → saveRecording이 완료되면 표시
+    // [FIX-SaveBtn] 버튼이 이미 표시 중(오류 메시지 등)이면 숨기지 않음
+    if(_sb&&_sb.style.display!=='block')_sb.style.display='none';
   }
   const m=String(Math.floor(elapsed/60)).padStart(2,'0');
   const s=String(elapsed%60).padStart(2,'0');
@@ -4155,9 +4158,9 @@ function drawPosOverlay(kps, pos){
     const mid={x:(mSh.x+mHip.x)/2,y:(mSh.y+mHip.y)/2};
     ctx.beginPath();ctx.arc(mid.x,mid.y,5,0,Math.PI*2);ctx.fillStyle=trunkCol;ctx.fill();
     if(pos.trunkLean!=null){
-      // [BUG3-FIX v2] 소스에서 정규화됨 → _xf=1 항상 (양수=신체오른쪽 기울기)
-      const dv=pos.trunkLean,side=dv>0?'우 ':'좌 ';
-      const _fsT=12; // 라이브 화면 - 고정 12px
+      // [FIX-Issue4] frontFlip은 좌우 레이블 표시에만 반영 (부호 정규화는 _pNorm에서 완료)
+      const dv=pos.trunkLean,side=(dv*(S.frontFlip?-1:1))>0?'우 ':'좌 ';
+      const _fsT=9; // [FIX-Issue3] 라이브 화면 - 다른 레이블과 동일한 9px
       ctx.font=`bold ${_fsT}px -apple-system,sans-serif`;
       ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;ctx.textAlign='left';
       ctx.strokeText(side+Math.abs(pos.trunkLean)+'°',mid.x+10,mid.y-4);
@@ -4173,13 +4176,7 @@ function drawPosOverlay(kps, pos){
     ctx.save();ctx.setLineDash([5,5]);
     ctx.beginPath();ctx.moveTo(mh.x,mh.y);ctx.lineTo(ma.x,ma.y);
     ctx.strokeStyle='rgba(33,150,243,.5)';ctx.lineWidth=2;ctx.stroke();ctx.setLineDash([]);
-    if(pos.hipShift!=null){
-      const hs=(pos.hipShift>0?'+':'')+pos.hipShift;
-      const hsc=posCol('hipShift');
-      ctx.font='bold 18px -apple-system,sans-serif';ctx.textAlign='left';
-      ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;
-      ctx.strokeText(hs,mh.x+10,mh.y+20);ctx.fillStyle=hsc;ctx.fillText(hs,mh.x+10,mh.y+20);
-    }
+    // [FIX-Issue2] hipShift 수치 텍스트 제거 (큰 값이 화면에 표시되던 문제)
     ctx.restore();
   }
   // ⑤ 무릎 편차선 (무릎 vs 힙-발목 직선)

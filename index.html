@@ -1307,7 +1307,7 @@ function updateAnglesBar(cmp,rawAngles){
     }
   }
 }
-const _FB_INTERVAL=2500; // ms between corrective feedback messages
+const _FB_INTERVAL=6000; // [FIX-FrontalFB v4] 2500→6000ms: 동작 중 이중발화 방지
 const _START_DELAY=1500;  // ms startup grace before first feedback fires
 function doFeedback(cmp,inZone){
   const now=Date.now(),ov=overall(cmp),PR=TX[CL].PRAISE,FBL=TX[CL].FB;
@@ -1440,9 +1440,24 @@ async function _runDetection(){
         // [Issue2 FIX] &&cmp 제거: 각도ref 없어도 게이트 항상 작동
         // cmp=null이면 시간기반 분기(else)로 빠져 이중발화 유발 → 게이트 있으면 무조건 게이트 분기
         if(_fGref){
-          // 정면 게이트: 각도 편차로 시작자세 감지(각도는 정면에서도 어느 정도 의미 있음)
+          // 정면 게이트: 각도 편차 우선 → null 시 위치 기반 fallback (정면에서 각도 계산 불가 대비)
           const _fDevGate=getAvgDev(angles,_fGref);
-          const _fInGate=_fDevGate!=null&&_fDevGate<=_GATE_ENTRY_THR;
+          // [FIX-FrontalRep] 각도 편차 null → 위치 기반 대체 게이트
+          let _fInGate;
+          if(_fDevGate!=null){
+            _fInGate=_fDevGate<=_GATE_ENTRY_THR;
+          } else {
+            // 정면 뷰: 관절 각도 계산 불가 → 골반/어깨 위치 편차로 시작자세 판단
+            const _pRef2Gt=_posRef[S.ex.id];
+            if(_pRef2Gt&&_lastPos){
+              const _hsDev=Math.abs((_lastPos.hipShift||0)-(_pRef2Gt.hipShift||0));
+              const _shDev=Math.abs((_lastPos.shoulderTilt||0)-(_pRef2Gt.shoulderTilt||0));
+              // 골반 편차 ≤ POS_THR*1.5, 어깨 편차 ≤ POS_THR*2 → 시작자세 근방
+              _fInGate=_hsDev<=POS_THR.hipShift*1.5&&_shDev<=POS_THR.shoulderTilt*2;
+            } else {
+              _fInGate=false; // 기준자세 미설정 시 게이트 판단 불가
+            }
+          }
           if(_fInGate){
             if(_gateState==='idle'){ _gateState='entry'; _gateInGateStartT=0; }
             else if(_gateState==='timing'){
@@ -1499,7 +1514,7 @@ async function _runDetection(){
               const entries=Object.entries(_lastPosCmp).filter(([k,e])=>e.dev!=null);
               if(!entries.length) return true;
               const avgDev=entries.reduce((s,[k,e])=>s+Math.abs(e.dev)/POS_THR[k],0)/entries.length;
-              return avgDev<=4; // 평균 상대편차 ≤4 → 기준자세 근방
+              return avgDev<=2.5; // [FIX-FrontalFB v4] ≤4→≤2.5: 동작 중 피드백 더 엄격히 억제
             })();
             if(!_fbNearRef){S.lastFB=now2;} // 멀면 lastFB만 갱신 (억제)
             else {
@@ -2227,6 +2242,7 @@ let _rafFrameCount=0;   // rAF 루프에서 실제 그린 프레임 수 (wall-cl
 let _fallbackSaveTimer=null; // fallback save timer handle (cancelled when onstop fires normally)
 let _deviceGamma=0;     // phone left-right roll angle from DeviceOrientationEvent (°)
 let _sensorReady=false; // true once valid sensor data received
+let _moduleIOSCam=false; // [FIX-iOS-STOP] module-level iOS camera flag for stopRecording
 let _srcMode='camera'; // 'camera' | 'file' — analysis source mode
 let _anaFileURL=null;  // blob URL for uploaded analysis video
 
@@ -2681,6 +2697,7 @@ async function startRecording(){
   // captureStream: iOS는 30fps, 기타는 30fps
   let compStream;
   const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
+  _moduleIOSCam=_isIOSCam; // [FIX-iOS-STOP] 모듈 레벨 저장 → stopRecording에서 참조
   // [FIX-iOS-REC] iOS Safari: canvas.captureStream()으로 MediaRecorder 생성 시 빈 chunks 반환
   // iOS 카메라 모드에서는 camera stream(S.stream)을 직접 사용 → 스켈레톤 없지만 저장 가능
   if(_isIOSCam&&S.stream&&S.stream.getVideoTracks().length){
@@ -2741,12 +2758,23 @@ async function startRecording(){
   }
   S.recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)_sessionChunks.push(e.data);};
   const _recIsCam=_srcMode==='camera';
-  S.recorder.onstop=()=>{if(_fallbackSaveTimer){clearTimeout(_fallbackSaveTimer);_fallbackSaveTimer=null;}saveRecording(_sessionChunks,_recWallMs);}; // [BUG1] file mode도 실제 녹화시간 전달
+  S.recorder.onstop=()=>{
+    // [FIX-iOS-STOP] iOS: 트랙 정지를 onstop에서 수행 (stop()보다 먼저 하면 최종 chunk 유실)
+    if(_moduleIOSCam&&S.compStream){S.compStream.getVideoTracks().forEach(t=>{try{t.stop();}catch(e){}});S.compStream=null;}
+    if(_fallbackSaveTimer){clearTimeout(_fallbackSaveTimer);_fallbackSaveTimer=null;}
+    saveRecording(_sessionChunks,_recWallMs);
+  }; // [BUG1] file mode도 실제 녹화시간 전달
 
   _recStartTimer=setTimeout(()=>{
     _recStartTimer=null;
     if(S.recorder&&S.recorder.state==='inactive'){
-      try{S.recorder.start();}catch(e){console.warn('Recorder start:',e);}
+      // [FIX-iOS-START] iOS 카메라: timeslice=500ms → ondataavailable 주기적 발화 보장
+      // 타임슬라이스 없으면 iOS에서 stop() 시 최종 chunk만 발화, 일부 환경서 비어있는 문제
+      if(_moduleIOSCam){
+        try{S.recorder.start(500);}catch(e){console.warn('Recorder start(iOS):',e);}
+      }else{
+        try{S.recorder.start();}catch(e){console.warn('Recorder start:',e);}
+      }
       _recStartMs=Date.now();
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
@@ -2802,7 +2830,11 @@ function stopRecording(){
       // No requestData() — timeslice mode delivers chunks automatically;
       // no-timeslice mode: stop() alone triggers final ondataavailable before onstop.
       // requestData() caused race condition on iOS (late ondataavailable after onstop).
-      if(S.compStream){S.compStream.getVideoTracks().forEach(t=>t.stop());S.compStream=null;} // [BUG1] frozen-frame 방지
+      // [FIX-iOS-STOP] iOS 카메라: recorder.stop() 먼저 호출 → onstop 핸들러에서 트랙 정리
+      // track.stop() 먼저 하면 iOS recorder 버퍼가 비워져 빈 chunks 발생
+      if(!_moduleIOSCam){
+        if(S.compStream){S.compStream.getVideoTracks().forEach(t=>t.stop());S.compStream=null;}
+      }
       S.recorder.stop();
       _fallbackSaveTimer=setTimeout(()=>{
         _fallbackSaveTimer=null;
@@ -3862,25 +3894,33 @@ const _deg1 = v => Math.round(v*10)/10; // 소수점 1자리 반올림
 
 // ── DeviceOrientation 센서 (정면/후면 수평 기준 보정) ──────────────────────
 function initOrientationSensor(){
-  if(_sensorReady) return; // 이미 활성화됨
+  // [FIX-Gyro v2] early-return guard 제거 → 재호출 허용 (탭으로 재시도)
+  if(typeof DeviceOrientationEvent === 'undefined') return; // 미지원 환경
   function _onOrientation(e){
     if(e.gamma == null) return;
     // 지수 가중 평균으로 스무딩 (0.3 = 빠른 반응 / 0.1 = 느린 반응)
     _deviceGamma = _deviceGamma * 0.7 + e.gamma * 0.3;
-    _sensorReady = true;
+    if(!_sensorReady){ _sensorReady=true; console.log('[Sensor] 자이로 활성화 γ='+_deviceGamma.toFixed(1)); }
   }
-  if(typeof DeviceOrientationEvent === 'undefined') return; // 미지원 환경
+  function _addListeners(){
+    // 이중 등록 방지: 기존 리스너 제거 후 재등록
+    window.removeEventListener('deviceorientation', _onOrientation, true);
+    window.removeEventListener('deviceorientationabsolute', _onOrientation, true);
+    window.addEventListener('deviceorientation', _onOrientation, true);
+    // [FIX-Gyro] deviceorientationabsolute: 일부 Android/iOS에서 발화
+    window.addEventListener('deviceorientationabsolute', _onOrientation, true);
+  }
   if(typeof DeviceOrientationEvent.requestPermission === 'function'){
     // iOS 13+ : 반드시 사용자 제스처 컨텍스트(await 전)에서 호출해야 함
     DeviceOrientationEvent.requestPermission()
       .then(state => {
-        if(state === 'granted')
-          window.addEventListener('deviceorientation', _onOrientation, true);
+        if(state === 'granted'){ _addListeners(); console.log('[Sensor] iOS 자이로 권한 승인'); }
+        else { console.warn('[Sensor] iOS 자이로 권한 거부'); }
       })
       .catch(e => console.warn('[Sensor] DeviceOrientation permission:', e));
   } else {
-    // Android / 구형 iOS
-    window.addEventListener('deviceorientation', _onOrientation, true);
+    // Android / 구형 iOS — 권한 불필요
+    _addListeners();
   }
 }
 
@@ -4048,7 +4088,7 @@ function updatePosBar(pos, cmp){
   // ② 골반 위치 (슬라이더)
   const thumb=$('pt-pos'), refLine=$('pr-pos'), valEl=$('pv-pos');
   if(thumb){
-    const v=pos?pos.hipShift:0, range=80;
+    const v=pos?(S.frontFlip?-pos.hipShift:pos.hipShift):0, range=80; // [FIX-HipSlider] frontFlip 반영
     thumb.style.left=Math.max(2,Math.min(98,((v+range)/(2*range))*100))+'%';
     const st=cmp&&cmp.hipShift?cmp.hipShift.st:'unk';
     thumb.style.background=ST_COL_POS[st]||'#2196F3';
@@ -4056,7 +4096,7 @@ function updatePosBar(pos, cmp){
   if(valEl) valEl.textContent=pos&&pos.hipShift!=null?(pos.hipShift>0?'+':'')+pos.hipShift:'--';
   const ref=_posRef[S.ex.id];
   if(refLine){
-    const rv=ref?ref.hipShift:null;
+    const rv=ref?(S.frontFlip?-ref.hipShift:ref.hipShift):null; // [FIX-HipSlider] frontFlip 반영
     if(rv!=null){refLine.style.left=Math.max(2,Math.min(98,((rv+80)/160)*100))+'%';refLine.style.display='block';}
     else refLine.style.display='none';
   }
@@ -4074,6 +4114,14 @@ function updatePosBar(pos, cmp){
   // ④ 센서 상태 표시
   const sensorLbl=$('pm-sensor-lbl');
   if(sensorLbl){
+    // [FIX-Gyro] 탭하면 권한 재요청
+    if(!sensorLbl._gyroTapBound){
+      sensorLbl._gyroTapBound=true;
+      sensorLbl.style.cursor='pointer';
+      sensorLbl.addEventListener('click',()=>{
+        if(!_sensorReady){ console.log('[Sensor] 탭으로 재시도'); initOrientationSensor(); }
+      });
+    }
     if(_sensorReady){
       const g=Math.round(_deviceGamma*10)/10;
       sensorLbl.textContent='수평기준: 자이로 (γ'+(g>=0?'+':'')+g+'°)';
@@ -4082,8 +4130,9 @@ function updatePosBar(pos, cmp){
       sensorLbl.textContent='수평기준: 발목선';
       sensorLbl.style.color='rgba(255,200,80,.5)';
     } else {
-      sensorLbl.textContent='수평기준: 화면';
-      sensorLbl.style.color='rgba(255,255,255,.3)';
+      // [FIX-Gyro] 자이로 미활성: 탭 유도 힌트
+      sensorLbl.textContent=typeof DeviceOrientationEvent!=='undefined'?'📱 탭: 자이로 활성화':'수평기준: 화면';
+      sensorLbl.style.color='rgba(255,180,50,.7)';
     }
   }
 }

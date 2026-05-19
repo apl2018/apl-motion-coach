@@ -1377,7 +1377,23 @@ async function _runDetection(){
         // 정면/후면 자세 지표 통계 누적 (전체 timing 프레임: fallback용)
         // [BUG2-FIX] 기준자세 범위(timing) 안에서만 누적 — 시작자세 대기 구간 제외
         const _fGref2=_gateEntryRef[S.ex.id];
-        const _inScoreZone=!_fGref2||_gateState==='timing';
+        // [Issue3 FIX] 점수 누적 조건 강화:
+        // ① 게이트 있으면 timing 구간만 (시작자세 대기·복귀 구간 제외)
+        // ② 기준자세(_posRef) 있으면 근접 프레임만 (각 지표가 POS_THR*2.5 이내)
+        const _gateOk=!_fGref2||_gateState==='timing';
+        let _nearRefOk=true;
+        if(_gateOk&&_lastPosCmp){
+          // 기준자세와 비교 결과가 있으면, 전체 지표가 허용 범위 내인 프레임만 포함
+          const _cmpEntries=Object.entries(_lastPosCmp);
+          if(_cmpEntries.length>0){
+            _nearRefOk=_cmpEntries.every(([k,e])=>{
+              if(e.dev==null||e.st==='unk') return true;
+              const t=POS_THR[k]||10;
+              return Math.abs(e.dev)<=t*2.5; // 임계값 2.5배 이내 → 기준자세 근방으로 인정
+            });
+          }
+        }
+        const _inScoreZone=_gateOk&&_nearRefOk;
         if(_inScoreZone&&pos&&S.stats){
           const PM=S.stats.posMetrics;
           const cmpP=_lastPosCmp;
@@ -1435,24 +1451,31 @@ async function _runDetection(){
           const _fDevGate=getAvgDev(angles,_fGref);
           const _fInGate=_fDevGate!=null&&_fDevGate<=_GATE_ENTRY_THR;
           if(_fInGate){
-            if(_gateState==='idle') _gateState='entry';
+            if(_gateState==='idle'){ _gateState='entry'; _gateInGateStartT=0; }
             else if(_gateState==='timing'){
-              clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
-              // [BUG6] 정면: 시작자세 복귀 = 렙 완료 → MIN_REP_MS 이상이면 즉시 피드백
-              if(_gateArmed&&(now2-_gateLastPrimeT)>=_MIN_REP_MS&&_lastCmp){
-                // [Issue5 FIX] 렙 완료 시 best-frame 스냅샷 저장
-                if(_bestTimingPos!=null){
-                  _repPosSnapshots.push({pos:{..._bestTimingPos},cmp:_bestTimingCmp?{..._bestTimingCmp}:null});
-                }
-                _bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity;
-                _gateArmed=false;_gateEndDetected=false;_lastRepT=now2;_gateState='entry';
-                S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
-                const _gRet2=_lastCmp;
-                S.lastFB=now2;S.speak=false;try{speechSynthesis.cancel();}catch(e){} // [BUG4-FIX] 0→now2: 이중발화 방지
-                setTimeout(()=>{if(S.speak)return;let _ft=null;if(_lastPosCmp&&!posAllGood(_lastPosCmp))_ft=posFeedbackStr(_lastPosCmp);else if(!_lastPosCmp&&_lastPos)_ft=posAbsFeedback(_lastPos);else if(_gRet2){const _fo=overall(_gRet2);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_gRet2);if(_ffb){const _fm=getFBMsg(_ffb);if(_fm)_ft=_fm;}}}if(_ft){speak(_ft);}S.lastFB=Date.now();},_GATE_FB_DELAY);
-              }else{_gateArmed=false;_gateEndDetected=false;_gateState='entry';}
+              // [Issue2 FIX] debounce: 200ms 이상 연속 감지돼야 시작자세 복귀로 인정 (노이즈 오감지 방지)
+              if(_gateInGateStartT===0) _gateInGateStartT=now2;
+              if(now2-_gateInGateStartT>=_GATE_CONFIRM_MS){
+                _gateInGateStartT=0;
+                clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
+                // [BUG6] 정면: 시작자세 복귀 = 렙 완료 → MIN_REP_MS 이상이면 즉시 피드백
+                if(_gateArmed&&(now2-_gateLastPrimeT)>=_MIN_REP_MS&&_lastCmp){
+                  // [Issue5 FIX] 렙 완료 시 best-frame 스냅샷 저장
+                  if(_bestTimingPos!=null){
+                    _repPosSnapshots.push({pos:{..._bestTimingPos},cmp:_bestTimingCmp?{..._bestTimingCmp}:null});
+                  }
+                  _bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity;
+                  _gateArmed=false;_gateEndDetected=false;_lastRepT=now2;_gateState='entry';
+                  S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
+                  const _gRet2=_lastCmp;
+                  S.lastFB=now2;S.speak=false;try{speechSynthesis.cancel();}catch(e){} // [BUG4-FIX] 0→now2: 이중발화 방지
+                  setTimeout(()=>{if(S.speak)return;let _ft=null;if(_lastPosCmp&&!posAllGood(_lastPosCmp))_ft=posFeedbackStr(_lastPosCmp);else if(!_lastPosCmp&&_lastPos)_ft=posAbsFeedback(_lastPos);else if(_gRet2){const _fo=overall(_gRet2);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_gRet2);if(_ffb){const _fm=getFBMsg(_ffb);if(_fm)_ft=_fm;}}}if(_ft){speak(_ft);}S.lastFB=Date.now();},_GATE_FB_DELAY);
+                }else{_gateArmed=false;_gateEndDetected=false;_gateState='entry';}
+              }
+              // else: debounce 대기 중 — 아직 전환 안 함
             }
           } else {
+            _gateInGateStartT=0; // [Issue2 FIX] 게이트 이탈 시 debounce 리셋
             if(_gateState==='entry'){
               _gateState='timing';_gateLastPrimeT=now2;_gateEndDetected=false;
               _gateArmed=(now2-_lastRepT>=_MIN_REP_MS);
@@ -1511,19 +1534,26 @@ async function _runDetection(){
           // timing: 타임아웃(12s) → idle
           if(_inGate){
             if(_gateState==='idle'){
-              _gateState='entry';
+              _gateState='entry'; _gateInGateStartT=0;
             } else if(_gateState==='timing'){
-              clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null;
-              // [BUG6] 시작자세 복귀 = 렙 완료 신호 → MIN_REP_MS 이상 경과했으면 즉시 피드백
-              if(_gateArmed&&(now3-_gateLastPrimeT)>=_MIN_REP_MS&&_lastCmp){
-                _gateArmed=false;_gateEndDetected=false;_lastRepT=now3;_gateState='entry';
-                S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
-                const _gRet=_lastCmp;
-                S.lastFB=0;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
-                setTimeout(()=>{if(S.speak)return;let _t=null;const _o=overall(_gRet);if(_o==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];_t=_gp[Math.floor(Math.random()*_gp.length)];}else{const _fb=primaryFB(_gRet);if(_fb){const _m=getFBMsg(_fb);if(_m)_t=_m;}}if(_t)speak(_t);S.lastFB=Date.now();},_GATE_FB_DELAY);
-              }else{_gateArmed=false;_gateEndDetected=false;_gateState='entry';}
+              // [Issue2 FIX] debounce: 200ms 연속 감지돼야 시작자세 복귀로 인정
+              if(_gateInGateStartT===0) _gateInGateStartT=now3;
+              if(now3-_gateInGateStartT>=_GATE_CONFIRM_MS){
+                _gateInGateStartT=0;
+                clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null;
+                // [BUG6] 시작자세 복귀 = 렙 완료 신호 → MIN_REP_MS 이상 경과했으면 즉시 피드백
+                if(_gateArmed&&(now3-_gateLastPrimeT)>=_MIN_REP_MS&&_lastCmp){
+                  _gateArmed=false;_gateEndDetected=false;_lastRepT=now3;_gateState='entry';
+                  S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
+                  const _gRet=_lastCmp;
+                  S.lastFB=now3;S.speak=false;try{speechSynthesis.cancel();}catch(e){} // [BUG4-FIX] 0→now3: 이중발화 방지
+                  setTimeout(()=>{if(S.speak)return;let _t=null;const _o=overall(_gRet);if(_o==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好의']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['Très bien','Bon']:['Great','Good'];_t=_gp[Math.floor(Math.random()*_gp.length)];}else{const _fb=primaryFB(_gRet);if(_fb){const _m=getFBMsg(_fb);if(_m)_t=_m;}}if(_t)speak(_t);S.lastFB=Date.now();},_GATE_FB_DELAY);
+                }else{_gateArmed=false;_gateEndDetected=false;_gateState='entry';}
+              }
+              // else: debounce 대기 중
             }
           } else {
+            _gateInGateStartT=0; // [Issue2 FIX] 게이트 이탈 시 debounce 리셋
             if(_gateState==='entry'){
               // 시작 자세 이탈 → armed: 끝 자세 도달 대기
               _gateState='timing';
@@ -2076,6 +2106,7 @@ let _pendingGateFBTimer = null;
 const _GATE_FB_DELAY = 300; // 끝 자세 도달 후 피드백까지 딜레이 ms
 const _GATE_ENTRY_THR = 40; // 시작 자세 인식 임계값 (평균 편차 °)
 const _GATE_PRIME_TIMEOUT = 12000;
+const _GATE_CONFIRM_MS = 200; // [Issue2 FIX] 시작자세 복귀 debounce: 200ms 연속 감지 후 전환
 let _gateSegmentMs = {};
 let _gateStartVideoT = {};
 let _gateEndVideoT = {};
@@ -2085,6 +2116,7 @@ let _gateEndVideoT = {};
 // _gateEndDetected: 끝자세 감지 후 중복 트리거 방지 플래그
 let _gateArmed = false;
 let _gateEndDetected = false;
+let _gateInGateStartT = 0; // [Issue2 FIX] timing→entry debounce: 시작자세 복귀 첫 감지 시각
 // [BUG5-FIX] per-rep 최적 프레임 스냅샷 (기준자세 타이밍 점수 정밀화)
 let _repPosSnapshots = [];
 let _bestTimingPos = null;
@@ -2558,10 +2590,23 @@ async function startRecording(){
       if(S.live) stopLive(); else if(S.recorder&&S.recorder.state==='recording') stopRecording();
       return;
     }
-    // [Issue1 FIX] 파일 모드: currentTime이 변하지 않으면(frozen frame) 드로우 스킵
+    // [Issue1 FIX v3] 파일 모드: currentTime이 변하지 않으면(frozen frame) 드로우 스킵
+    // 추가: 프레임 정지 + 비디오 paused/ended 상태이면 즉시 녹화 종료 (iOS 이벤트 미발화 대비)
     if(_srcMode==='file'&&vid.currentTime>0){
       const _ct=vid.currentTime;
-      if(_ct===_lastDrawCompVidTime) return; // 동일 프레임 중복 캡처 방지
+      if(_ct===_lastDrawCompVidTime){
+        // 프레임 정지 — 비디오가 실제로 멈췄는지 확인
+        const _d=vid.duration;
+        if((vid.paused||vid.ended)&&_d>0&&isFinite(_d)&&_ct>=_d*0.75){
+          // 비디오 종료/정지 상태이고 75% 이상 진행됨 → 녹화 즉시 종료
+          _compDrawing=false;
+          if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
+          if(S.compStream){S.compStream.getVideoTracks().forEach(t=>{try{t.stop();}catch(e){}});S.compStream=null;}
+          try{compCtx.clearRect(0,0,cw,ch);}catch(e){}
+          if(S.live) stopLive(); else if(S.recorder&&S.recorder.state==='recording') stopRecording();
+        }
+        return; // frozen frame: 캡처 스킵
+      }
       _lastDrawCompVidTime=_ct;
     }
     try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
@@ -3261,7 +3306,7 @@ async function startLive(){
 
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
   _gateState='idle';_gateLastPrimeT=0;_gateWasInZone=false;_gateSpeechSkip=false;_lastRepT=0;_pendingGateFB=null;
-  _gateArmed=false; _gateEndDetected=false;
+  _gateArmed=false; _gateEndDetected=false; _gateInGateStartT=0; // [Issue2 FIX]
   if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
   _repPosSnapshots=[];_bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity; // [BUG5-FIX]
   resetRepOsc();
@@ -3316,20 +3361,32 @@ async function startLive(){
     const _vidDur=vid.duration&&isFinite(vid.duration)?vid.duration:0;
     const _maxMs=_vidDur>0?(_vidDur+1)*1000:60000;
     S._fileMaxTimer=setTimeout(()=>{ S._fileMaxTimer=null; if(S.live) stopLive(); },_maxMs);
-    // stall 감지: vid.currentTime이 2초 이상 변하지 않으면 강제 종료
+    // [Issue1 FIX v3] stall 감지: 300ms 간격으로 폴링 → 빠른 종료
+    // 영상 끝부분(≥85%) 에서는 frozen frame이 없어도 즉시 종료 (iOS ended 이벤트 미발화 대비)
     let _lastVidTime=-1,_stallCount=0;
     S._stallInterval=setInterval(()=>{
       if(!S.live){clearInterval(S._stallInterval);return;}
-      const ct=vid.currentTime;
+      const ct=vid.currentTime,d=vid.duration;
+      // ① 영상 98% 이상 진행 → 즉시 종료 (frozen 여부 무관)
+      if(d>0&&isFinite(d)&&ct>=d*0.98){
+        clearInterval(S._stallInterval);
+        if(S.live) stopLive();
+        return;
+      }
+      // ② stall 감지: currentTime이 300ms 동안 변하지 않고 75% 이상 진행됐으면 종료
       if(ct===_lastVidTime){
         _stallCount++;
-        if(_stallCount>=1){ // 2s 이상 멈춤 → 강제 종료
+        const _nearEnd=d>0&&isFinite(d)&&ct>=d*0.75;
+        if(_nearEnd&&_stallCount>=1){ // 300ms stall + near end → 즉시 종료
+          clearInterval(S._stallInterval);
+          if(S.live) stopLive();
+        } else if(_stallCount>=7){ // 2.1s stall (7×300ms) → 어디서든 강제 종료
           clearInterval(S._stallInterval);
           if(S.live) stopLive();
         }
       }else{_stallCount=0;}
       _lastVidTime=ct;
-    },2000);
+    },300);
   }
   startRecording(); // audioStream already set, so skips getUserMedia inside
   loop();
@@ -4328,12 +4385,6 @@ async function init(){
             const u=URL.createObjectURL(blob);window.open(u,'_blank');
             setTimeout(()=>URL.revokeObjectURL(u),60000);
             alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
-            _clearSave();
-          });
-      } else {
-        const u=URL.createObjectURL(blob);window.open(u,'_blank');
-        setTimeout(()=>URL.revokeObjectURL(u),60000);
-        alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
         _clearSave();
       }
     } else if(navigator.canShare&&navigator.canShare({files:[file]})){

@@ -1307,7 +1307,7 @@ function updateAnglesBar(cmp,rawAngles){
     }
   }
 }
-const _FB_INTERVAL=6000; // [FIX-FrontalFB v4] 2500→6000ms: 동작 중 이중발화 방지
+const _FB_INTERVAL=3500; // [FIX-FB v5] 6000→3500ms: 타이머 리셋 로직 개선으로 간격 단축 가능
 const _START_DELAY=1500;  // ms startup grace before first feedback fires
 function doFeedback(cmp,inZone){
   const now=Date.now(),ov=overall(cmp),PR=TX[CL].PRAISE,FBL=TX[CL].FB;
@@ -1361,6 +1361,7 @@ async function _runDetection(){
         // [FIX-TrunkDir v3] trunkLean은 extractPositions()에서 body-centric 투영으로 자동 정규화
         // hipShift만 _pNorm으로 보정 (image-space x좌표 기반이므로 여전히 필요)
         const _pNorm=_lrKp;
+        _lastPNorm=_pNorm; // [FIX-HipSlider v2] updatePosBar에서 camera-space 변환 사용
         if(pos&&_pNorm<0){
           // shoulderTilt/hipTilt는 정규화 불필요, trunkLean도 공식 내부에서 자동 처리
           if(pos.hipShift!=null) pos.hipShift=-pos.hipShift;
@@ -1516,7 +1517,12 @@ async function _runDetection(){
               const avgDev=entries.reduce((s,[k,e])=>s+Math.abs(e.dev)/POS_THR[k],0)/entries.length;
               return avgDev<=2.5; // [FIX-FrontalFB v4] ≤4→≤2.5: 동작 중 피드백 더 엄격히 억제
             })();
-            if(!_fbNearRef){S.lastFB=now2;} // 멀면 lastFB만 갱신 (억제)
+            if(!_fbNearRef){
+              // [FIX-FB v5] 운동 중(기준자세에서 멀리): 타이머 리셋 없이 이번 프레임만 skip
+              // 이전: S.lastFB=now2 → 운동 중 매 프레임 타이머 리셋 → 피드백 영구 억제 버그
+              // 수정: 아무 것도 안 함 → 타이머는 마지막 피드백 시점부터 계속 진행
+              // 효과: 운동 후 3.5초 후 기준자세 근방이면 자동 발화
+            }
             else {
               let fb=null;
               if(_lastPosCmp&&!posAllGood(_lastPosCmp)){
@@ -2243,6 +2249,7 @@ let _fallbackSaveTimer=null; // fallback save timer handle (cancelled when onsto
 let _deviceGamma=0;     // phone left-right roll angle from DeviceOrientationEvent (°)
 let _sensorReady=false; // true once valid sensor data received
 let _moduleIOSCam=false; // [FIX-iOS-STOP] module-level iOS camera flag for stopRecording
+let _lastPNorm=1; // [FIX-HipSlider v2] 마지막 pNorm 값 (body↔camera 공간 변환용)
 let _srcMode='camera'; // 'camera' | 'file' — analysis source mode
 let _anaFileURL=null;  // blob URL for uploaded analysis video
 
@@ -2771,7 +2778,11 @@ async function startRecording(){
       // [FIX-iOS-START] iOS 카메라: timeslice=500ms → ondataavailable 주기적 발화 보장
       // 타임슬라이스 없으면 iOS에서 stop() 시 최종 chunk만 발화, 일부 환경서 비어있는 문제
       if(_moduleIOSCam){
-        try{S.recorder.start(500);}catch(e){console.warn('Recorder start(iOS):',e);}
+        // [FIX-iOS-START v2] timeslice 제거: iOS start(N) 불안정 → start() 사용
+        // start 실패 시 즉시 saveRecording([]) → 에러 버튼 표시
+        let _iosStartOK=false;
+        try{S.recorder.start();_iosStartOK=true;}catch(e){console.warn('iOS recorder.start() failed:',e);}
+        if(!_iosStartOK){setTimeout(()=>{if(!_pendingSaveBlob)saveRecording([]);},200);return;}
       }else{
         try{S.recorder.start();}catch(e){console.warn('Recorder start:',e);}
       }
@@ -2832,6 +2843,8 @@ function stopRecording(){
       // requestData() caused race condition on iOS (late ondataavailable after onstop).
       // [FIX-iOS-STOP] iOS 카메라: recorder.stop() 먼저 호출 → onstop 핸들러에서 트랙 정리
       // track.stop() 먼저 하면 iOS recorder 버퍼가 비워져 빈 chunks 발생
+      // [FIX-iOS-STOP v2] iOS/non-iOS 동일: recorder.stop() 즉시 호출
+      // track 정지는 onstop 핸들러에서 처리 (iOS) / 또는 바로 처리 (non-iOS)
       if(!_moduleIOSCam){
         if(S.compStream){S.compStream.getVideoTracks().forEach(t=>t.stop());S.compStream=null;}
       }
@@ -4088,7 +4101,12 @@ function updatePosBar(pos, cmp){
   // ② 골반 위치 (슬라이더)
   const thumb=$('pt-pos'), refLine=$('pr-pos'), valEl=$('pv-pos');
   if(thumb){
-    const v=pos?(S.frontFlip?-pos.hipShift:pos.hipShift):0, range=80; // [FIX-HipSlider] frontFlip 반영
+    // [FIX-HipSlider v2] body-space → camera-space 변환
+    // pos.hipShift는 _pNorm 보정된 body-space (양수=신체우). 슬라이더는 camera-space 필요
+    // 후면카메라(_lastPNorm=-1): 신체우=카메라좌 → 반전 필요
+    // 전면카메라(_lastPNorm=+1): 신체우=카메라우(미러) → 그대로
+    const hipShiftCam=pos?pos.hipShift*(_lastPNorm<0?-1:1):0;
+    const v=(S.frontFlip?-hipShiftCam:hipShiftCam), range=80;
     thumb.style.left=Math.max(2,Math.min(98,((v+range)/(2*range))*100))+'%';
     const st=cmp&&cmp.hipShift?cmp.hipShift.st:'unk';
     thumb.style.background=ST_COL_POS[st]||'#2196F3';
@@ -4096,7 +4114,8 @@ function updatePosBar(pos, cmp){
   if(valEl) valEl.textContent=pos&&pos.hipShift!=null?(pos.hipShift>0?'+':'')+pos.hipShift:'--';
   const ref=_posRef[S.ex.id];
   if(refLine){
-    const rv=ref?(S.frontFlip?-ref.hipShift:ref.hipShift):null; // [FIX-HipSlider] frontFlip 반영
+    const hipRefCam=ref?ref.hipShift*(_lastPNorm<0?-1:1):null; // [FIX-HipSlider v2]
+    const rv=hipRefCam!=null?(S.frontFlip?-hipRefCam:hipRefCam):null;
     if(rv!=null){refLine.style.left=Math.max(2,Math.min(98,((rv+80)/160)*100))+'%';refLine.style.display='block';}
     else refLine.style.display='none';
   }
@@ -4118,8 +4137,20 @@ function updatePosBar(pos, cmp){
     if(!sensorLbl._gyroTapBound){
       sensorLbl._gyroTapBound=true;
       sensorLbl.style.cursor='pointer';
+      sensorLbl.style.padding='4px 6px';
       sensorLbl.addEventListener('click',()=>{
-        if(!_sensorReady){ console.log('[Sensor] 탭으로 재시도'); initOrientationSensor(); }
+        if(!_sensorReady){
+          console.log('[Sensor] 탭으로 재시도');
+          initOrientationSensor();
+          // 1.5초 후에도 활성화 안 되면 사용자에게 안내
+          setTimeout(()=>{
+            if(!_sensorReady){
+              alert('자이로 센서 활성화 실패\n\n' +
+                'iOS: 설정 → 개인 정보 보호 → 동작 및 피트니스 → Safari 켜기\n' +
+                '또는 Safari 주소창에서 새로 고침 후 다시 탭해주세요.');
+            }
+          },1500);
+        }
       });
     }
     if(_sensorReady){
@@ -4130,9 +4161,11 @@ function updatePosBar(pos, cmp){
       sensorLbl.textContent='수평기준: 발목선';
       sensorLbl.style.color='rgba(255,200,80,.5)';
     } else {
-      // [FIX-Gyro] 자이로 미활성: 탭 유도 힌트
-      sensorLbl.textContent=typeof DeviceOrientationEvent!=='undefined'?'📱 탭: 자이로 활성화':'수평기준: 화면';
-      sensorLbl.style.color='rgba(255,180,50,.7)';
+      // [FIX-Gyro] 자이로 미활성: 탭 유도 힌트 (더 크고 밝게)
+      sensorLbl.textContent=typeof DeviceOrientationEvent!=='undefined'?'📱 여기 탭 → 자이로 활성화':'수평기준: 화면';
+      sensorLbl.style.color='rgba(255,210,50,.95)';
+      sensorLbl.style.fontSize='11px';
+      sensorLbl.style.fontWeight='700';
     }
   }
 }

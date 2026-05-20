@@ -1467,20 +1467,25 @@ async function _runDetection(){
               if(_gateInGateStartT===0) _gateInGateStartT=now2;
               if(now2-_gateInGateStartT>=_GATE_CONFIRM_MS){
                 _gateInGateStartT=0;
-                clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
+                const _wasEndDet=_gateEndDetected; // [Work15-Fix4] 끝자세 도달 여부 캡처 (timer 보존 결정)
+                if(!_wasEndDet){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;} // devToRef 타이머는 보존
                 // [BUG6] 정면: 시작자세 복귀 = 렙 완료 → MIN_REP_MS 이상이면 즉시 피드백
                 if(_gateArmed&&(now2-_gateLastPrimeT)>=_MIN_REP_MS){
-                  // [Issue5 FIX] 렙 완료 시 best-frame 스냅샷 저장
-                  if(_bestTimingPos!=null){
+                  // [Issue5 FIX] 렙 완료 시 best-frame 스냅샷 저장 (devToRef 미감지 시만)
+                  if(!_wasEndDet&&_bestTimingPos!=null){
                     _repPosSnapshots.push({pos:{..._bestTimingPos},cmp:_bestTimingCmp?{..._bestTimingCmp}:null});
                   }
                   _bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity;
                   _gateArmed=false;_gateEndDetected=false;_lastRepT=now2;_gateState='entry';
                   S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
-                  const _gRet2=_lastCmp;
-                  S.lastFB=now2;S.speak=false;try{speechSynthesis.cancel();}catch(e){} // [BUG4-FIX] 0→now2: 이중발화 방지
-                  setTimeout(()=>{if(S.speak)return;let _ft=null;if(_lastPosCmp&&!posAllGood(_lastPosCmp))_ft=posFeedbackStr(_lastPosCmp);else if(!_lastPosCmp&&_lastPos&&!isFrontal())_ft=posAbsFeedback(_lastPos);/* [FIX-FrontalFB v3] 정면: 기준자세 없으면 절대값 피드백 억제 */else if(_gRet2&&!isFrontal()){const _fo=overall(_gRet2);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_gRet2);if(_ffb){const _fm=getFBMsg(_ffb);if(_fm)_ft=_fm;}}}if(_ft){speak(_ft);}S.lastFB=Date.now();},_GATE_FB_DELAY);
-                }else{_gateArmed=false;_gateEndDetected=false;_gateState='entry';}
+                  if(!_wasEndDet){ // [Work15-Fix4] 끝자세 미감지 시에만 시작자세 복귀 피드백 발화
+                    const _gRet2=_lastCmp;
+                    S.lastFB=now2;S.speak=false;try{speechSynthesis.cancel();}catch(e){} // [BUG4-FIX] 0→now2: 이중발화 방지
+                    setTimeout(()=>{if(S.speak)return;let _ft=null;if(_lastPosCmp&&!posAllGood(_lastPosCmp))_ft=posFeedbackStr(_lastPosCmp);else if(!_lastPosCmp&&_lastPos&&!isFrontal())_ft=posAbsFeedback(_lastPos);/* [FIX-FrontalFB v3] 정면: 기준자세 없으면 절대값 피드백 억제 */else if(_gRet2&&!isFrontal()){const _fo=overall(_gRet2);if(_fo==='good'){const _gp=CL==='ko'?['아주 좋아','굿']:['Great','Good'];_ft=_gp[Math.floor(Math.random()*_gp.length)];}else{const _ffb=primaryFB(_gRet2);if(_ffb){const _fm=getFBMsg(_ffb);if(_fm)_ft=_fm;}}}if(_ft){speak(_ft);}S.lastFB=Date.now();},_GATE_FB_DELAY);
+                  }
+                }else{
+                  if(_wasEndDet){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;} // [Work15-Fix4] 렙 너무 짧음 → devToRef 타이머 취소
+                  _gateArmed=false;_gateEndDetected=false;_gateState='entry';}
               }
               // else: debounce 대기 중 — 아직 전환 안 함
             }
@@ -1499,6 +1504,31 @@ async function _runDetection(){
               if(now2-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
                 clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
                 _gateArmed=false;_gateEndDetected=false;_gateState='idle';
+              }
+              // [Work15-Fix4] 끝자세(기준자세) 도달 감지 → 피드백 예약 + 복귀 이중발화 방지
+              if(_gateArmed&&!_gateEndDetected&&(now2-_gateLastPrimeT)>=_GATE_CONFIRM_MS){
+                const _refPos=_posRef[S.ex.id];
+                if(_refPos&&_lastPos){
+                  const _hsDev=Math.abs((_lastPos.hipShift||0)-(_refPos.hipShift||0));
+                  const _shDev=Math.abs((_lastPos.shoulderTilt||0)-(_refPos.shoulderTilt||0));
+                  if(_hsDev<=POS_THR.hipShift*1.5&&_shDev<=POS_THR.shoulderTilt*2){
+                    _gateEndDetected=true;
+                    clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
+                    if(_bestTimingPos!=null){
+                      _repPosSnapshots.push({pos:{..._bestTimingPos},cmp:_bestTimingCmp?{..._bestTimingCmp}:null});
+                      _bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity;
+                    }
+                    const _capFBPosCmp=_lastPosCmp;
+                    _pendingGateFBTimer=setTimeout(()=>{
+                      if(!S.live)return; // 분析 종료 시 취소
+                      if(S.speak)return;
+                      let _ft=null;
+                      if(_capFBPosCmp&&!posAllGood(_capFBPosCmp))_ft=posFeedbackStr(_capFBPosCmp);
+                      if(_ft){speak(_ft);}
+                      S.lastFB=Date.now();
+                    },_GATE_FB_DELAY);
+                  }
+                }
               }
             }
           }
@@ -3406,6 +3436,7 @@ async function startLive(){
     }catch(e){console.warn('Mic retry failed:',e);}
   }
 
+  _pendingSaveBlob=null;_pendingSaveName=''; // [Work15-Fix1] 새 세션 시작 시 이전 녹화 blob 초기화
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
   _gateState='idle';_gateLastPrimeT=0;_gateWasInZone=false;_gateSpeechSkip=false;_lastRepT=0;_pendingGateFB=null;
   _gateArmed=false; _gateEndDetected=false; _gateInGateStartT=0; // [Issue2 FIX]
@@ -3577,6 +3608,8 @@ function showSummary(elapsed){
         }
       }
       for(const k of selPosKeys){const rs=repStats[k];totalW+=rs.g*1.0+rs.w*0.7+rs.c*0.4;totalAll+=rs.g+rs.w+rs.c;}
+      // [Work15-Fix3] 스냅샷 있지만 모든 cmp=null(기준자세 없음) → PM 폴백
+      if(totalAll===0){_useSnap=false;for(const k of selPosKeys){const m=PM[k];totalW+=m.g*1.0+m.w*0.7+m.c*0.4;totalAll+=m.g+m.w+m.c;}}
     } else {
       for(const k of selPosKeys){const m=PM[k];totalW+=m.g*1.0+m.w*0.7+m.c*0.4;totalAll+=m.g+m.w+m.c;}
     }
@@ -4048,7 +4081,7 @@ function posAbsFeedback(pos){
   const ABS={shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:20, lKneeOff:22, rKneeOff:22};
   const sel=k=>S.jointSel[POS_JOINT_MAP[k]!==undefined?POS_JOINT_MAP[k]:k]!==false;
   // [FIX-FeedbackDir] body-space → camera-space 변환: pNorm<0(후면) 또는 frontFlip 시 부호 반전
-  const _fbCamSign=(_lastPNorm<0?-1:1)*(S.frontFlip?-1:1)*(isFrontal()?-1:1); // [FIX-FeedbackDir v2] 정면 추가 반전
+  const _fbCamSign=((S.dir==='front')?-1:1)*(S.frontFlip?-1:1); // [Work15-Fix2] body→camera sign
   // ① 골반 좌우 위치(hipShift) 최우선
   if(sel('hipShift')&&pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift){
     const _hsCam=(pos.hipShift)*_fbCamSign;
@@ -4080,7 +4113,7 @@ function posFeedbackStr(cmp){
   if(!cmp) return null;
   // [FIX-FeedbackDir] body-space → camera-space 변환: pNorm<0(후면) 또는 frontFlip 시 부호 반전
   const sel = k => S.jointSel[POS_JOINT_MAP[k]]!==false;
-  const _fbCamSign2=(_lastPNorm<0?-1:1)*(S.frontFlip?-1:1)*(isFrontal()?-1:1); // [FIX-FeedbackDir v2] 정면 추가 반전
+  const _fbCamSign2=((S.dir==='front')?-1:1)*(S.frontFlip?-1:1); // [Work15-Fix2] body→camera sign
   const {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff} = cmp;
   // ① 골반 좌우 위치(hipShift) 최우선
   if(sel('hipShift')&&hipShift&&hipShift.dev!=null&&hipShift.st!=='good'){
@@ -4133,8 +4166,8 @@ function updatePosBar(pos, cmp){
     // 후면카메라(_lastPNorm=-1): 신체우=카메라좌 → 반전 필요
     // 전면카메라(_lastPNorm=+1): 신체우=카메라우(미러) → 그대로
     // 정면분析(isFrontal): 후면분析과 반대 방향으로 추가 반전 필요
-    const _frontalFlip=isFrontal()?-1:1;
-    const hipShiftCam=pos?pos.hipShift*(_lastPNorm<0?-1:1)*_frontalFlip:0;
+    const _camFlip=(S.dir==='front')?-1:1; // [Work15-Fix2] body→camera: 정면(front)=반전, 후면(back)=그대로
+    const hipShiftCam=pos?pos.hipShift*_camFlip:0;
     const v=(S.frontFlip?-hipShiftCam:hipShiftCam), range=80;
     thumb.style.left=Math.max(2,Math.min(98,((v+range)/(2*range))*100))+'%';
     const st=cmp&&cmp.hipShift?cmp.hipShift.st:'unk';
@@ -4143,7 +4176,7 @@ function updatePosBar(pos, cmp){
   if(valEl) valEl.textContent=pos&&pos.hipShift!=null?(pos.hipShift>0?'+':'')+pos.hipShift:'--';
   const ref=_posRef[S.ex.id];
   if(refLine){
-    const hipRefCam=ref?ref.hipShift*(_lastPNorm<0?-1:1)*_frontalFlip:null; // [FIX-HipSlider v3]
+    const hipRefCam=ref?ref.hipShift*_camFlip:null; // [Work15-Fix2]
     const rv=hipRefCam!=null?(S.frontFlip?-hipRefCam:hipRefCam):null;
     if(rv!=null){refLine.style.left=Math.max(2,Math.min(98,((rv+80)/160)*100))+'%';refLine.style.display='block';}
     else refLine.style.display='none';

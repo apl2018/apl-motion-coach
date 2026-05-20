@@ -4046,7 +4046,7 @@ function posAbsFeedback(pos){
   const ABS={shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:20, lKneeOff:22, rKneeOff:22};
   const sel=k=>S.jointSel[POS_JOINT_MAP[k]!==undefined?POS_JOINT_MAP[k]:k]!==false;
   // [FIX-FeedbackDir] body-space → camera-space 변환: pNorm<0(후면) 또는 frontFlip 시 부호 반전
-  const _fbCamSign=(_lastPNorm<0?-1:1)*(S.frontFlip?-1:1);
+  const _fbCamSign=(_lastPNorm<0?-1:1)*(S.frontFlip?-1:1)*(isFrontal()?-1:1); // [FIX-FeedbackDir v2] 정면 추가 반전
   // ① 골반 좌우 위치(hipShift) 최우선
   if(sel('hipShift')&&pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift){
     const _hsCam=(pos.hipShift)*_fbCamSign;
@@ -4078,7 +4078,7 @@ function posFeedbackStr(cmp){
   if(!cmp) return null;
   // [FIX-FeedbackDir] body-space → camera-space 변환: pNorm<0(후면) 또는 frontFlip 시 부호 반전
   const sel = k => S.jointSel[POS_JOINT_MAP[k]]!==false;
-  const _fbCamSign2=(_lastPNorm<0?-1:1)*(S.frontFlip?-1:1);
+  const _fbCamSign2=(_lastPNorm<0?-1:1)*(S.frontFlip?-1:1)*(isFrontal()?-1:1); // [FIX-FeedbackDir v2] 정면 추가 반전
   const {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff} = cmp;
   // ① 골반 좌우 위치(hipShift) 최우선
   if(sel('hipShift')&&hipShift&&hipShift.dev!=null&&hipShift.st!=='good'){
@@ -4126,11 +4126,13 @@ function updatePosBar(pos, cmp){
   // ② 골반 위치 (슬라이더)
   const thumb=$('pt-pos'), refLine=$('pr-pos'), valEl=$('pv-pos');
   if(thumb){
-    // [FIX-HipSlider v2] body-space → camera-space 변환
+    // [FIX-HipSlider v3] body-space → camera-space 변환 + isFrontal 반전
     // pos.hipShift는 _pNorm 보정된 body-space (양수=신체우). 슬라이더는 camera-space 필요
     // 후면카메라(_lastPNorm=-1): 신체우=카메라좌 → 반전 필요
     // 전면카메라(_lastPNorm=+1): 신체우=카메라우(미러) → 그대로
-    const hipShiftCam=pos?pos.hipShift*(_lastPNorm<0?-1:1):0;
+    // 정면분析(isFrontal): 후면분析과 반대 방향으로 추가 반전 필요
+    const _frontalFlip=isFrontal()?-1:1;
+    const hipShiftCam=pos?pos.hipShift*(_lastPNorm<0?-1:1)*_frontalFlip:0;
     const v=(S.frontFlip?-hipShiftCam:hipShiftCam), range=80;
     thumb.style.left=Math.max(2,Math.min(98,((v+range)/(2*range))*100))+'%';
     const st=cmp&&cmp.hipShift?cmp.hipShift.st:'unk';
@@ -4139,7 +4141,7 @@ function updatePosBar(pos, cmp){
   if(valEl) valEl.textContent=pos&&pos.hipShift!=null?(pos.hipShift>0?'+':'')+pos.hipShift:'--';
   const ref=_posRef[S.ex.id];
   if(refLine){
-    const hipRefCam=ref?ref.hipShift*(_lastPNorm<0?-1:1):null; // [FIX-HipSlider v2]
+    const hipRefCam=ref?ref.hipShift*(_lastPNorm<0?-1:1)*_frontalFlip:null; // [FIX-HipSlider v3]
     const rv=hipRefCam!=null?(S.frontFlip?-hipRefCam:hipRefCam):null;
     if(rv!=null){refLine.style.left=Math.max(2,Math.min(98,((rv+80)/160)*100))+'%';refLine.style.display='block';}
     else refLine.style.display='none';

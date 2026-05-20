@@ -1612,7 +1612,7 @@ async function _runDetection(){
                     if(_t) speak(_t);
                     S.lastFB=Date.now(); // [BUG5] 항상 갱신
                   },_GATE_FB_DELAY);
-                },_segMs+500);
+                },Math.max(_segMs*2, 6000));
               }
             } else if(_gateState==='timing'){
               if(now3-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
@@ -1657,6 +1657,7 @@ async function _runDetection(){
 function loop(){
   if(!S.live) return;
   // ① Draw skeleton every frame at 60fps using cached keypoints → smooth even during fast moves
+  try{
   if(_lastKps){
     drawFrame(_lastKps,_lastCmp);
     updateAnglesBar(_lastCmp,_lastAngles);
@@ -1664,6 +1665,7 @@ function loop(){
   }else if(!_detPending){
     ctx.clearRect(0,0,cvs.width,cvs.height);
   }
+  }catch(e){console.warn('[loop draw]',e);}
   // ② TF.js 감지: DET_MS(40ms ≈ 25fps) — 녹화 중에도 throttle 없음
   // 녹화 canvas는 setInterval(33ms) 독립 루프 → TF.js rAF 지연에 영향 안받음
   const now=Date.now();
@@ -3527,7 +3529,7 @@ function stopLive(){
 }
 // ── SUMMARY ──────────────────────────────────────────────────────────────────
 function showSummary(elapsed){
-  const st=S.stats;if(!st||st.totalFrames<5) return;
+  const st=S.stats;if(!st||st.totalFrames<1) return;
   const L=TX[CL];
   // 저장 버튼: blob 준비되면 정상 표시, 미준비면 기존 상태(에러 버튼 등) 유지
   const _sb=$('btn-sum-save');

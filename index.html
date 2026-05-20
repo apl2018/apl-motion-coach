@@ -1372,10 +1372,10 @@ async function _runDetection(){
         // 정면/후면 자세 지표 통계 누적 (전체 timing 프레임: fallback용)
         // [BUG2-FIX] 기준자세 범위(timing) 안에서만 누적 — 시작자세 대기 구간 제외
         const _fGref2=_gateEntryRef[S.ex.id];
-        // [Issue3 FIX] 점수 누적 조건 강화:
-        // ① 게이트 있으면 timing 구간만 (시작자세 대기·복귀 구간 제외)
-        // ② 기준자세(_posRef) 있으면 근접 프레임만 (각 지표가 POS_THR*2.5 이내)
-        const _gateOk=!_fGref2||_gateState==='timing';
+        // [Work21-ScoreFix] 정면분析: 각도 게이트(_fGref2) 의존 없이 항상 posMetrics 누적
+        // 정면에서 각도 계산 불신뢰 → timing 구간 제한 해제, 전 프레임 누적
+        // 측면분析: 기존 동작 유지 (timing 구간만 누적)
+        const _gateOk=isFrontal()?true:(!_fGref2||_gateState==='timing');
         // [Issue4 FIX] _nearRefOk 제거: 너무 엄격해서 score=0 유발. _repPosSnapshots에서 처리
         const _inScoreZone=_gateOk;
         if(_inScoreZone&&pos&&S.stats){
@@ -1432,21 +1432,22 @@ async function _runDetection(){
         // → 기준자세만 저장해도 횟수 카운팅 가능 (시작 게이트 프레임 별도 설정 불필요)
         const _fPosGateRef=_gateEntryPos[S.ex.id]||_posRef[S.ex.id];
         if(_fGref||_fPosGateRef){
-          // 정면 게이트: 각도 편차 우선 → null 시 위치 기반 fallback (정면에서 각도 계산 불가 대비)
-          const _fDevGate=getAvgDev(angles,_fGref);
-          // [FIX-FrontalRep] 각도 편차 null → 위치 기반 대체 게이트
+          // [Work21-GateFix] 정면분析: 각도 게이트 건너뜀 → 항상 위치 게이트 사용
+          // 정면에서 관절각도는 신체 정면 방향으로 겹쳐 계산 불신뢰 → 위치 기반만 신뢰
+          // 측면분析: 기존대로 각도 게이트 우선 사용
+          const _fDevGate=isFrontal()?null:getAvgDev(angles,_fGref);
           let _fInGate;
           if(_fDevGate!=null){
             _fInGate=_fDevGate<=_GATE_ENTRY_THR;
           } else {
-            // 정면 뷰: 관절 각도 계산 불가 → 골반/어깨 위치 편차로 시작자세 판단
+            // 정면 뷰: 골반/어깨 위치 편차로 시작자세 판단
             // [FIX-FrontalRep] _gateEntryPos(시작 프레임 위치) 우선, 없으면 _posRef 폴백
             const _pRef2Gt=_gateEntryPos[S.ex.id]||_posRef[S.ex.id];
             if(_pRef2Gt&&_lastPos){
               const _hsDev=Math.abs((_lastPos.hipShift||0)-(_pRef2Gt.hipShift||0));
               const _shDev=Math.abs((_lastPos.shoulderTilt||0)-(_pRef2Gt.shoulderTilt||0));
-              // 골반 편차 ≤ POS_THR*1.5, 어깨 편차 ≤ POS_THR*2 → 시작자세 근방
-              _fInGate=_hsDev<=POS_THR.hipShift*1.5&&_shDev<=POS_THR.shoulderTilt*2;
+              // 골반 편차 ≤ POS_THR*2, 어깨 편차 ≤ POS_THR*3 → 시작자세 근방 (여유 확대)
+              _fInGate=_hsDev<=POS_THR.hipShift*2&&_shDev<=POS_THR.shoulderTilt*3;
             } else {
               _fInGate=false; // 시작자세 미설정 시 게이트 판단 불가
             }
@@ -2808,10 +2809,14 @@ async function startRecording(){
       // [FIX-iOS-START] iOS 카메라: timeslice=500ms → ondataavailable 주기적 발화 보장
       // 타임슬라이스 없으면 iOS에서 stop() 시 최종 chunk만 발화, 일부 환경서 비어있는 문제
       if(_moduleIOSCam){
-        // [FIX-iOS-START v2] timeslice 제거: iOS start(N) 불안정 → start() 사용
-        // start 실패 시 즉시 saveRecording([]) → 에러 버튼 표시
+        // [Work21-RecFix] 파일모드: start(1000) timeslice → 1초마다 chunk 보장 (스켈레톤 포함 저장)
+        // 카메라모드: start() 유지 (timeslice 불안정)
+        // 파일모드에서 start()는 ondataavailable 미발화 → 빈 chunks → 원본 fallback만 저장되는 문제 수정
         let _iosStartOK=false;
-        try{S.recorder.start();_iosStartOK=true;}catch(e){console.warn('iOS recorder.start() failed:',e);}
+        try{
+          if(_srcMode==='file'){S.recorder.start(1000);}else{S.recorder.start();}
+          _iosStartOK=true;
+        }catch(e){console.warn('iOS recorder.start() failed:',e);}
         if(!_iosStartOK){setTimeout(()=>{if(!_pendingSaveBlob)saveRecording([]);},200);return;}
       }else{
         // [Work18-RecFix] timeslice=1000ms: 1초마다 chunk 생성 → 빈 chunks 방지 (iOS는 start() 불안정이라 제외)
@@ -4392,6 +4397,8 @@ async function init(){
       if(S.live||S.caps) return;
       document.querySelectorAll('.dirbtn').forEach(x=>x.classList.remove('on'));
       b.classList.add('on');S.dir=b.dataset.d;
+      // [Work21-LabelFix] 방향 선택 즉시 슬라이더 라벨 업데이트 (분析 시작 전에도 올바른 방향 표시)
+      {const ll=$('pt-lbl-l'),lr=$('pt-lbl-r');if(ll&&lr){ll.textContent=S.dir==='front'?'우':'좌';lr.textContent=S.dir==='front'?'좌':'우';}}
       // [Work17] _updateFrontFlipBtns 제거됨
     });
   });

@@ -4351,12 +4351,10 @@ async function init(){
       if(S.live||S.caps) return;
       document.querySelectorAll('.dirbtn').forEach(x=>x.classList.remove('on'));
       b.classList.add('on');S.dir=b.dataset.d;
-      _updateFrontFlipBtns(); // [FIX-1]
+      // [Work17] _updateFrontFlipBtns 제거됨
     });
   });
-  // [FIX-1] 정면 좌우 수동 선택 버튼
-  // [Work17] front-flip 이벤트 리스너 제거
-  _updateFrontFlipBtns();
+  // [Work17] front-flip 버튼 제거 — _updateFrontFlipBtns 호출 불필요
   $('rename-cancel').addEventListener('click',closeRenameModal);
   $('rename-confirm').addEventListener('click',confirmRename);
   $('rename-input').addEventListener('keydown',e=>{if(e.key==='Enter')confirmRename();if(e.key==='Escape')closeRenameModal();});

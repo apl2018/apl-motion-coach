@@ -529,11 +529,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div id="rec-time"></div>
     <div id="rep-badge"><div id="rep-num">0</div><div id="rep-lbl">회</div></div>
     <div id="zone-badge" class="out">범위 밖</div>
-    <!-- [FIX-1] 정면 분석 좌우 수동 선택 -->
-    <div id="front-flip-btns" style="display:none;position:absolute;top:50%;transform:translateY(-50%);left:0;right:0;height:44px;pointer-events:auto;z-index:50">
-      <button id="front-flip-l" style="position:absolute;top:0;left:10px;padding:6px 12px;background:rgba(0,0,0,.65);color:#fff;border:1.5px solid rgba(255,255,255,.5);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">← 좌</button>
-      <button id="front-flip-r" style="position:absolute;top:0;right:10px;padding:6px 12px;background:rgba(0,0,0,.65);color:#fff;border:1.5px solid rgba(255,255,255,.5);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">우 →</button>
-    </div>
+    <!-- [Work17] 좌/우 반전 버튼 제거 — 방향을 모드로 고정 -->
   </div>
 
   <!-- Position mode bar (front/back view) — moved outside cam-wrap to avoid black overlay -->
@@ -1017,7 +1013,6 @@ const S={
   inZone:false,repCount:0,startTime:0,stats:null,fbLog:{},
   jointSel:{knee:true,hip:true,trunk:true,spine:true,shoulder:true,elbow:true},
   premium:false,
-  frontFlip:false,  // [FIX-1] 정면 분석 좌우 반전 여부
 };
 function freshStats(){
   return{zoneFrames:0,totalFrames:0,
@@ -1215,7 +1210,7 @@ function drawFrame(kps,cmp){
       return ST_COL_POS[st]||'#fff';
     }
     // [FIX-2] 값이 source에서 정규화됨: positive=신체 우측. 직접 부호 사용
-    const _xfD=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1); // knee swap에만 사용
+    const _xfD=(S.dir==='back'?1:-1); // [Work17] knee swap용 (frontFlip 제거, 방향 고정)
     // 어깨 기울기 — 어깨 연결선 중앙 위
     if(ok(lSh)&&ok(rSh)&&pos.shoulderTilt!=null){
       const mSh=coverXY({x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2,score:1});
@@ -1230,8 +1225,7 @@ function drawFrame(kps,cmp){
     }
     // 무릎 오프셋 — 각 무릎 옆
     // [Issue3 FIX] _xfD<0 = 카메라-왼쪽≠신체-왼쪽 → 좌/우 버튼 레이블과 일치하도록 값 교환
-    // back+frontFlip=true: 카메라좌=신체우 → rKneeOff를 왼쪽에 표시
-    // front+frontFlip=false: 카메라좌=신체우(미러) → rKneeOff를 왼쪽에 표시
+    // [Work17] 정면(front): _xfD<0 → 카메라좌=신체우(미러) → rKneeOff를 좌측 표시, front 고정
     const _kSwapF=(_xfD<0);
     const _lKV=_kSwapF?pos.rKneeOff:pos.lKneeOff, _lKC=_kSwapF?'rKneeOff':'lKneeOff';
     const _rKV=_kSwapF?pos.lKneeOff:pos.rKneeOff, _rKC=_kSwapF?'lKneeOff':'rKneeOff';
@@ -1352,18 +1346,12 @@ async function _runDetection(){
       _lastKps=kps;_kpsTs=Date.now();
       if(isFrontal()){
         const pos=extractPositions(kps);
-        // [Issue4 FIX v2] keypoint 실제 좌표 기반 자동 부호 결정
-        // lHip.x > rHip.x: 피사체 좌측이 이미지 우측 = 후면카메라+정면뷰 → trunkLean/hipShift 반전 필요
-        // lHip.x < rHip.x: 셀카/후면뷰 → 반전 불필요
-        // 카메라 방향 고정 가정 없이 실제 keypoint로 자동 결정
-        const _kpLHip=kps[11],_kpRHip=kps[12];
-        const _lrKp=(_kpLHip&&_kpRHip)?(_kpLHip.x>_kpRHip.x?-1:1):((isUser?1:(S.dir==='back'?1:-1)));
-        // [FIX-TrunkDir v3] trunkLean은 extractPositions()에서 body-centric 투영으로 자동 정규화
-        // hipShift만 _pNorm으로 보정 (image-space x좌표 기반이므로 여전히 필요)
-        const _pNorm=_lrKp;
-        _lastPNorm=_pNorm; // [FIX-HipSlider v2] updatePosBar에서 camera-space 변환 사용
+        // [Work17] 방향 고정: 셀카(user)=반전없음 / 후면카메라+정면뷰=반전 / 후면뷰=반전없음
+        // 화면좌(APL Motion Coach측)=신체우(정면), 화면우(AI준비완료측)=신체좌(정면)
+        // 후면모드는 반대
+        const _pNorm=(isUser?1:(S.dir==='back'?1:-1));
+        _lastPNorm=_pNorm;
         if(pos&&_pNorm<0){
-          // shoulderTilt/hipTilt는 정규화 불필요, trunkLean도 공식 내부에서 자동 처리
           if(pos.hipShift!=null) pos.hipShift=-pos.hipShift;
         }
         _lastPos=pos;
@@ -1872,13 +1860,9 @@ async function saveRefFrame(){
     if(fpv){
       const pKps=_fpPoses?_fpPoses.keypoints:null;
       if(pKps){const pRef=extractPositions(pKps);if(pRef){
-        // [Issue4 FIX v2] 기준자세도 keypoint 기반 자동 부호 결정 (분석과 동일한 로직)
-        const _kpLHipR=pKps[11],_kpRHipR=pKps[12];
-        const _lrKpRef=(_kpLHipR&&_kpRHipR)?(_kpLHipR.x>_kpRHipR.x?-1:1):((S.facingMode==='user'?1:(S.dir==='back'?1:-1)));
-        // [FIX-TrunkDir v3] trunkLean은 extractPositions()에서 body-centric 투영으로 자동 처리
-        const _pNormRef=_lrKpRef;
+        // [Work17] 분석과 동일한 방향 고정 로직
+        const _pNormRef=(S.facingMode==='user'?1:(S.dir==='back'?1:-1));
         if(_pNormRef<0){
-          // trunkLean 제거, hipShift만 보정
           if(pRef.hipShift!=null) pRef.hipShift=-pRef.hipShift;
         }
         _posRef[S.ex.id]=pRef;
@@ -1924,9 +1908,8 @@ async function saveGateFrame(){
   if(isFrontal()){
     const _gpRef=extractPositions(kps);
     if(_gpRef){
-      const _kpLH=kps[11],_kpRH=kps[12];
-      const _lrKpG=(_kpLH&&_kpRH)?(_kpLH.x>_kpRH.x?-1:1):1;
-      if(_lrKpG<0&&_gpRef.hipShift!=null) _gpRef.hipShift=-_gpRef.hipShift; // body-space 변환
+      const _lrKpG=(S.facingMode==='user'?1:(S.dir==='back'?1:-1)); // [Work17] 방향 고정
+      if(_lrKpG<0&&_gpRef.hipShift!=null) _gpRef.hipShift=-_gpRef.hipShift;
       _gateEntryPos[id]={..._gpRef};
       try{localStorage.setItem('apl_gate_pos_'+id,JSON.stringify(_gateEntryPos[id]));}catch(e){}
     }
@@ -2456,9 +2439,9 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
     }
     kneeLineComp(lHip2,lKnee2,lAnk2);
     kneeLineComp(rHip2,rKnee2,rAnk2);
-    // 관절 레이블 (정면 모드) — [FIX-2] frontFlip 반영
+    // 관절 레이블 (정면 모드) — [Work17] 방향 고정
     ctx2.textAlign='left';
-    const _xfD2=(S.dir==='back'?1:-1)*(S.frontFlip?-1:1);
+    const _xfD2=(S.dir==='back'?1:-1); // [Work17] frontFlip 제거
     if(ok2(lSh2)&&ok2(rSh2)&&pos.shoulderTilt!=null){
       const mSh=xy({x:(lSh2.x+rSh2.x)/2,y:(lSh2.y+rSh2.y)/2,score:1});
       const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓'; // [Issue4 FIX] 직접 부호 사용
@@ -3430,12 +3413,12 @@ async function startLive(){
     const tw=$('traj-wrap'); if(tw) tw.classList.add('on');
     const tc=$('traj-cvs');
     if(tc&&tc.offsetWidth) tc.width=tc.offsetWidth;
-    if(typeof _updateFrontFlipBtns==='function') _updateFrontFlipBtns(); // [FIX-1]
+    // [Work17] frontFlip 버튼 제거됨
   } else {
     $('abar').classList.add('on');
     $('pos-bar').classList.remove('on');
     const tw=$('traj-wrap'); if(tw) tw.classList.remove('on');
-    const _fb=$('front-flip-btns');if(_fb) _fb.style.display='none'; // [FIX-1]
+
   }
   // (zone-entry globals removed — using simple time-based feedback)
   $('rep-badge').classList.add('on');
@@ -3507,7 +3490,7 @@ function stopLive(){
   $('btn-main').className='start';$('btn-main').textContent=TX[CL].btn_start;
   $('abar').classList.remove('on');$('pos-bar').classList.remove('on');
   const _tw=$('traj-wrap');if(_tw)_tw.classList.remove('on');
-  const _fb2=$('front-flip-btns');if(_fb2) _fb2.style.display='none'; // [FIX-1]
+
   _lastPos=null;_lastPosCmp=null;
   $('chip').className='';
   $('no-det').classList.remove('on');$('no-ref').classList.remove('on');
@@ -4052,8 +4035,8 @@ function posAbsFeedback(pos){
   if(!pos) return null;
   const ABS={shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:20, lKneeOff:22, rKneeOff:22};
   const sel=k=>S.jointSel[POS_JOINT_MAP[k]!==undefined?POS_JOINT_MAP[k]:k]!==false;
-  // [FIX-FeedbackDir] body-space → camera-space 변환: pNorm<0(후면) 또는 frontFlip 시 부호 반전
-  const _fbCamSign=(S.frontFlip?-1:1); // [Work16-Fix2] hipShift is already body-space → no dir flip
+  // [Work17] hipShift는 이미 body-space(양수=신체우) → 부호 변환 불필요
+  const _fbCamSign=1; // [Work17] hipShift body-space, frontFlip 제거
   // ① 골반 좌우 위치(hipShift) 최우선
   if(sel('hipShift')&&pos.hipShift!=null&&Math.abs(pos.hipShift)>ABS.hipShift){
     const _hsCam=(pos.hipShift)*_fbCamSign;
@@ -4085,7 +4068,7 @@ function posFeedbackStr(cmp){
   if(!cmp) return null;
   // [FIX-FeedbackDir] body-space → camera-space 변환: pNorm<0(후면) 또는 frontFlip 시 부호 반전
   const sel = k => S.jointSel[POS_JOINT_MAP[k]]!==false;
-  const _fbCamSign2=(S.frontFlip?-1:1); // [Work16-Fix2] hipShift is already body-space → no dir flip
+  const _fbCamSign2=1; // [Work17] frontFlip 제거
   const {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff} = cmp;
   // ① 골반 좌우 위치(hipShift) 최우선
   if(sel('hipShift')&&hipShift&&hipShift.dev!=null&&hipShift.st!=='good'){
@@ -4140,7 +4123,7 @@ function updatePosBar(pos, cmp){
     // 정면분析(isFrontal): 후면분析과 반대 방향으로 추가 반전 필요
     const _camFlip=1; // [Work16-Fix2] hipShift는 body-space → 슬라이더 방향 그대로 (dir 반전 불필요)
     const hipShiftCam=pos?pos.hipShift*_camFlip:0;
-    const v=(S.frontFlip?-hipShiftCam:hipShiftCam), range=80;
+    const v=hipShiftCam, range=80; // [Work17] frontFlip 제거
     thumb.style.left=Math.max(2,Math.min(98,((v+range)/(2*range))*100))+'%';
     const st=cmp&&cmp.hipShift?cmp.hipShift.st:'unk';
     thumb.style.background=ST_COL_POS[st]||'#2196F3';
@@ -4149,7 +4132,7 @@ function updatePosBar(pos, cmp){
   const ref=_posRef[S.ex.id];
   if(refLine){
     const hipRefCam=ref?ref.hipShift*_camFlip:null; // [Work15-Fix2]
-    const rv=hipRefCam!=null?(S.frontFlip?-hipRefCam:hipRefCam):null;
+    const rv=hipRefCam; // [Work17] frontFlip 제거
     if(rv!=null){refLine.style.left=Math.max(2,Math.min(98,((rv+80)/160)*100))+'%';refLine.style.display='block';}
     else refLine.style.display='none';
   }
@@ -4332,14 +4315,7 @@ function drawPosOverlay(kps, pos){
   // [Issue3 FIX] 어깨기울기/골반기울기/무릎 수치는 drawFrame()에서만 표시
 }
 
-// ── [FIX-1] 정면 좌우 방향 버튼 업데이트 (전역 함수) ────────────────────────
-function _updateFrontFlipBtns(){
-  const fbDiv=$('front-flip-btns');if(!fbDiv) return;
-  const lBtn=$('front-flip-l'),rBtn=$('front-flip-r');
-  if(lBtn) lBtn.textContent=S.frontFlip?'← 우':'← 좌'; // 글자 스왑
-  if(rBtn) rBtn.textContent=S.frontFlip?'좌 →':'우 →'; // 글자 스왑
-  fbDiv.style.display=isFrontal()?'block':'none';
-}
+// [Work17] _updateFrontFlipBtns 제거 — 방향을 모드로 고정, 버튼 불필요
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init(){
@@ -4379,8 +4355,7 @@ async function init(){
     });
   });
   // [FIX-1] 정면 좌우 수동 선택 버튼
-  $('front-flip-l').addEventListener('click',()=>{S.frontFlip=!S.frontFlip;_updateFrontFlipBtns();}); // 어느 쪽이든 토글
-  $('front-flip-r').addEventListener('click',()=>{S.frontFlip=!S.frontFlip;_updateFrontFlipBtns();});
+  // [Work17] front-flip 이벤트 리스너 제거
   _updateFrontFlipBtns();
   $('rename-cancel').addEventListener('click',closeRenameModal);
   $('rename-confirm').addEventListener('click',confirmRename);

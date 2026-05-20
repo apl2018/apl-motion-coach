@@ -551,10 +551,12 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
       </div>
       <div class="pm-row">
         <span class="pm-lbl">골반 위치</span>
+        <span id="pt-lbl-l" style="font-size:9px;color:rgba(255,255,255,.45);flex-shrink:0;min-width:10px;text-align:center">좌</span>
         <div class="pm-track">
           <div class="pm-refline" id="pr-pos"></div>
           <div class="pm-thumb" id="pt-pos" style="left:50%"></div>
         </div>
+        <span id="pt-lbl-r" style="font-size:9px;color:rgba(255,255,255,.45);flex-shrink:0;min-width:10px;text-align:center">우</span>
         <span class="pm-val" id="pv-pos">--</span>
       </div>
       <div class="pm-row">
@@ -1495,6 +1497,15 @@ async function _runDetection(){
               // threshold가 너무 느슨해 조기 감지 → 피드백/카운팅 모두 무력화되는 버그 유발
             }
           }
+          // [Work20-FBFix] 게이트 경로에서도 시간 기반 위치 피드백 허용
+          // _posRef 있으면 else(게이트없음)블록에 진입 불가 → 기준자세 있어도 정기 코칭 발화
+          // 렙 완료 피드백(setTimeout _GATE_FB_DELAY)이 S.lastFB를 갱신하므로 이중발화 방지됨
+          if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak){
+            let _gFb=null;
+            if(_lastPosCmp&&!posAllGood(_lastPosCmp)){_gFb=posFeedbackStr(_lastPosCmp);}
+            else if(!_lastPosCmp&&_lastPos){_gFb=posAbsFeedback(_lastPos);}
+            if(_gFb){speak(_gFb);S.lastFB=now2;S.fbLog[_gFb]=(S.fbLog[_gFb]||0)+1;}
+          }
         } else {
           // 게이트 없음: 시간 기반 피드백 (2500ms마다)
           if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak){
@@ -1521,7 +1532,7 @@ async function _runDetection(){
               let fb=null;
               if(_lastPosCmp&&!posAllGood(_lastPosCmp)){
                 fb=posFeedbackStr(_lastPosCmp);
-              } else if(!_lastPosCmp&&_lastPos&&!isFrontal()){
+              } else if(!_lastPosCmp&&_lastPos){ // [Work19-FBFix] 정면 절대값 피드백 허용
                 // [FIX-FrontalFB v3] 정면/후면: 기준자세 없으면 절대값 피드백 완전 억제
                 // 기준자세 없이 절대 임계값으로 교정 지시 → 선수 개인차 무시한 부적절 발화
                 fb=posAbsFeedback(_lastPos);
@@ -2257,6 +2268,7 @@ let _iosDirectStream=false; // [FIX-iOS-REC v3] iOS uses S.stream tracks directl
 let _lastPNorm=1; // [FIX-HipSlider v2] 마지막 pNorm 값 (body↔camera 공간 변환용)
 let _srcMode='camera'; // 'camera' | 'file' — analysis source mode
 let _anaFileURL=null;  // blob URL for uploaded analysis video
+let _anaFileBlob=null; // [Work20-RecFix] 원본 File 객체 — captureStream 실패 시 폴백 저장용
 
 // Play a 3-note ascending chime.
 // Routes into _recAudioDest (captured by MediaRecorder) AND ctx.destination (heard live).
@@ -2709,7 +2721,7 @@ async function startRecording(){
   // captureStream: iOS는 30fps, 기타는 30fps
   let compStream;
   const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
-  _moduleIOSCam=_isIOSCam; // [FIX-iOS-STOP] 모듈 레벨 저장 → stopRecording에서 참조
+  _moduleIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent); // [Work19-RecFix] 파일모드 포함 전 iOS: onstop 100ms 지연 → late ondataavailable 대응
   _iosDirectStream=false; // [FIX-iOS-REC v3] 매 녹화 시작 시 초기화
   // [FIX-iOS-REC v3] iOS Safari: 클론 트랙은 빈 chunks 반환 → 원본 트랙 직접 사용
   // cloned tracks produce zero-size chunks on iOS; direct track reference works correctly
@@ -3065,6 +3077,23 @@ async function patchMP4Timestamps(blob,wallMs){
 
 async function saveRecording(chunks,wallMs){
   if(!chunks||!chunks.length){
+    // [Work20-RecFix] 파일 모드 + 원본 파일 있으면 원본 영상 저장으로 폴백
+    // iOS captureStream/MediaRecorder 미지원 시 분析 영상 대신 원본 파일 제공
+    if(_srcMode==='file'&&_anaFileBlob){
+      const origExt=(_anaFileBlob.name||'video.mp4').split('.').pop().toLowerCase();
+      const now=new Date();
+      const stamp=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+      _pendingSaveBlob=_anaFileBlob;
+      _pendingSaveName=`APL_${S.ex.name}_${stamp}_원본.${origExt}`;
+      const _saveBtn=$('btn-sum-save');
+      if(_saveBtn){
+        _saveBtn.style.display='block';
+        _saveBtn.textContent='📥 원본 영상 저장';
+        _saveBtn.style.background='';
+        _saveBtn.style.pointerEvents='';
+      }
+      return;
+    }
     const _sb=$('btn-sum-save');
     // [FIX-SaveBtn v2] 항상 클릭 가능하게 표시 — click 시 alert()로 원인 안내
     if(_sb){
@@ -3197,6 +3226,7 @@ function switchSrcMode(mode){
   $('src-file-btn').classList.toggle('on',mode==='file');
   if(mode==='camera'){
     if(_anaFileURL){URL.revokeObjectURL(_anaFileURL);_anaFileURL=null;}
+    _anaFileBlob=null; // [Work20-RecFix]
     $('ana-file-label').textContent='';
     vid.pause();vid.src='';
     // 카메라 모드 transform 복원 (전면/후면 미러)
@@ -3300,6 +3330,7 @@ function onAnaFileSelected(e){
     return;
   }
   if(_anaFileURL) URL.revokeObjectURL(_anaFileURL);
+  _anaFileBlob=file; // [Work20-RecFix] 원본 File 객체 보관 (폴백 저장용)
   _anaFileURL=URL.createObjectURL(file);
   vid.pause();
   vid.srcObject=null;
@@ -4122,9 +4153,9 @@ function updatePosBar(pos, cmp){
     // 후면카메라(_lastPNorm=-1): 신체우=카메라좌 → 반전 필요
     // 전면카메라(_lastPNorm=+1): 신체우=카메라우(미러) → 그대로
     // 정면분析(isFrontal): 후면분析과 반대 방향으로 추가 반전 필요
-    // [Work18-SliderFix] _lastPNorm 사용: 후면카메라+정면뷰=-1(신체우=카메라좌→슬라이더좌), 나머지=1
-    // body-space hipShift → camera-space 변환 (트레이너가 화면에서 보는 방향과 일치)
-    const _camFlip=_lastPNorm;
+    // [Work19-SliderFix] _lastPNorm 제거 → S.dir 직접 사용 (첫 프레임부터 즉시 올바른 방향)
+    // front: 신체우=화면좌 → _camFlip=-1(슬라이더좌=신체우) / back: 신체우=화면우 → _camFlip=1
+    const _camFlip=(isFrontal()&&S.dir==='front')?-1:1;
     const hipShiftCam=pos?pos.hipShift*_camFlip:0;
     const v=hipShiftCam, range=80;
     thumb.style.left=Math.max(2,Math.min(98,((v+range)/(2*range))*100))+'%';
@@ -4138,6 +4169,13 @@ function updatePosBar(pos, cmp){
     const rv=hipRefCam; // [Work17] frontFlip 제거
     if(rv!=null){refLine.style.left=Math.max(2,Math.min(98,((rv+80)/160)*100))+'%';refLine.style.display='block';}
     else refLine.style.display='none';
+  }
+  // [Work20-SliderLabel] 정면분析: 화면 왼쪽="우"(선수 오른쪽), 화면 오른쪽="좌"(선수 왼쪽)
+  // 후면/측면분析: 화면 왼쪽="좌", 화면 오른쪽="우"
+  const lblL=$('pt-lbl-l'),lblR=$('pt-lbl-r');
+  if(lblL&&lblR){
+    if(S.dir==='front'){lblL.textContent='우';lblR.textContent='좌';}
+    else{lblL.textContent='좌';lblR.textContent='우';}
   }
 
   // ③ 무릎 정렬
@@ -4533,7 +4571,7 @@ async function init(){
   try{
     S.det=await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
-            {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
+      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
     );
     if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
     S.ready=true;

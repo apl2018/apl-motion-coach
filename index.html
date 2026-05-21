@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v24</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v25</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1511,18 +1511,8 @@ async function _runDetection(){
               // threshold가 너무 느슨해 조기 감지 → 피드백/카운팅 모두 무력화되는 버그 유발
             }
           }
-          // [Work20-FBFix] 게이트 경로에서도 시간 기반 위치 피드백 허용
-          // _posRef 있으면 else(게이트없음)블록에 진입 불가 → 기준자세 있어도 정기 코칭 발화
-          // 렙 완료 피드백(setTimeout _GATE_FB_DELAY)이 S.lastFB를 갱신하므로 이중발화 방지됨
-          // [Work22-FBFix] timing 상태(시작자세 이탈, 운동 중)에서는 피드백 억제
-          // 기준자세1→기준자세2 사이 불필요한 피드백 방지 (entry 상태=시작자세에서만 발화)
-          if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak&&_gateState!=='timing'){
-            let _gFb=null;
-            if(_lastPosCmp&&!posAllGood(_lastPosCmp)){_gFb=posFeedbackStr(_lastPosCmp);}
-            else if(_lastPosCmp&&posAllGood(_lastPosCmp)){const _pr=TX[CL].PRAISE;if(_pr)_gFb=_pr[Math.floor(Math.random()*_pr.length)];} // [Work24-FBFix] 자세 완벽 시 칭찬
-            else if(!_lastPosCmp&&_lastPos){_gFb=posAbsFeedback(_lastPos);}
-            if(_gFb){speak(_gFb);S.lastFB=now2;S.fbLog[_gFb]=(S.fbLog[_gFb]||0)+1;}
-          }
+                    // [Work25-FBFix] Time-based frontal feedback removed
+          // Feedback fires once per rep only (in timing->entry setTimeout)
         } else {
           // 게이트 없음: 시간 기반 피드백 (2500ms마다)
           if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak){
@@ -2644,6 +2634,11 @@ async function startRecording(){
   comp.width=cw; comp.height=ch;
   const compCtx=comp.getContext('2d');
   S.compCanvas=comp;
+  // [Work25-RecFix] iOS file mode: DOM attach so captureStream gets real frames
+  if(_moduleIOSCam&&_srcMode==='file'){
+    comp.style.cssText='position:fixed;left:-9999px;top:0;width:1px;height:1px;pointer-events:none;opacity:0.01;';
+    document.body.appendChild(comp);
+  }
 
   function drawComp(){
     if(!_compDrawing) return;
@@ -2892,6 +2887,8 @@ function stopRecording(){
   if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
   if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}
+  // [Work25-RecFix] Remove DOM-attached comp canvas
+  if(S.compCanvas&&S.compCanvas.parentNode){S.compCanvas.parentNode.removeChild(S.compCanvas);}
   $('rec-dot').classList.remove('on');$('rec-time').classList.remove('on');
   const _fallbackChunks=S.recChunks;
   if(S.recorder){
@@ -3419,7 +3416,11 @@ async function startLive(){
   if(_srcMode==='file'&&_anaFileURL){
     cdown.classList.add('on');
     cnum.textContent='▶';cnum.style.color='#4CAF50';
-    await sleep(700);
+    // [Work25-PermFix] Wait for mic permission BEFORE playing video
+    if(_micPromise&&!S.audioStream){
+      await Promise.race([_micPromise,sleep(2500)]);
+    }
+    await sleep(300);
     cdown.classList.remove('on');cnum.style.color='#fff';
     try{
       vid.currentTime=0;
@@ -3436,7 +3437,8 @@ async function startLive(){
   }
   // ④ 카운트다운 후 마이크 준비 대기 — 최대 2초 추가 대기 (파일모드 700ms 카운트다운 보완)
   //    S.audioStream이 아직 null이면 _micPromise가 resolve될 때까지 기다림
-  if(_micPromise&&!S.audioStream){
+  // [Work25-PermFix] file mode: already waited before video; camera mode only
+  if(_micPromise&&!S.audioStream&&_srcMode!=='file'){
     await Promise.race([_micPromise,sleep(2000)]);
   }
   // 마이크 재확인: 여전히 없으면 한 번 더 시도 (첫 실행 or 백그라운드 복귀 후)
@@ -3479,6 +3481,9 @@ async function startLive(){
     {const _ab=document.querySelector('.dirbtn.on');if(_ab)S.dir=_ab.dataset.d;}
     {const _ll=$('pt-lbl-l'),_lr=$('pt-lbl-r');if(_ll&&_lr){_ll.textContent=S.dir==='front'?'우':'좌';_lr.textContent=S.dir==='front'?'좌':'우';}}
     // [Work17] frontFlip 버튼 제거됨
+    // [Work25-RepFix] Start frontal gate in timing+armed -> first arrival at gate pos = rep #1
+    {const _fPGR25=_gateEntryPos[S.ex.id]||_posRef[S.ex.id];
+     if(_fPGR25){_gateState='timing';_gateArmed=true;_gateLastPrimeT=Date.now()-_MIN_REP_MS;}}
   } else {
     $('abar').classList.add('on');
     $('pos-bar').classList.remove('on');
@@ -4627,6 +4632,10 @@ async function init(){
     document.body.appendChild(rb);
   }
   speechSynthesis.getVoices();
+  // [Work25-GyroFix] Android/old-iOS: no permission needed, init at load
+  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission!=='function'){
+    initOrientationSensor();
+  }
 }
 
 window.addEventListener('load',init);

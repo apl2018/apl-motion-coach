@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v27</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v28</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -573,7 +573,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
         </div>
       </div>
       <div class="pm-row" id="pm-sensor-row" style="justify-content:flex-end;margin-top:1px">
-        <span id="pm-sensor-lbl" style="font-size:9px;color:rgba(255,255,255,.35);letter-spacing:.3px">수평기준: 화면</span>
+        <span id="pm-sensor-lbl" style="font-size:9px;color:rgba(255,210,50,.95);letter-spacing:.3px;font-weight:700;cursor:pointer;padding:4px 6px">📱 탭 → 자이로 활성화</span>
       </div>
   </div>
 
@@ -1507,18 +1507,27 @@ async function _runDetection(){
                 clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
                 _gateArmed=false;_gateEndDetected=false;_gateState='idle';
               }
-              // [Work27-EndPoseFix] 정면分析: timing 단계에서 끝자세(기준자세/_posRef) 도달 즉시 rep 카운팅
-              // 기존: 시작자세 복귀 시 rep 카운팅 (느림). 변경: 끝자세 도달 즉시 카운팅 (빠름)
+              // [Work28-EndPoseFix] 정면分析: timing 단계에서 끝자세(기준자세/_posRef) 도달 즉시 rep 카운팅
+              // 수정1: _MIN_REP_MS 800→300ms (끝자세 빠르게 반응)
+              // 수정2: hipShift 진행률 80% 도달로도 rep 발동 (끝자세 정확 매칭 불필요)
+              // 수정3: Fix A(_lastPos null→유효)로 인해 끝자세 감지 자체가 동작하게 됨
               if(_gateArmed&&!_gateEndDetected&&isFrontal()){
                 const _pEndRef=_posRef[S.ex.id];
-                if(_pEndRef&&_lastPos&&(now2-_gateLastPrimeT)>=_MIN_REP_MS){
+                const _pStartRef=_gateEntryPos?_gateEntryPos[S.ex.id]:null;
+                if(_pEndRef&&_lastPos&&(now2-_gateLastPrimeT)>=300){ // [Work28] 300ms (기존 800ms)
                   const _ePosHsDev=Math.abs((_lastPos.hipShift||0)-(_pEndRef.hipShift||0));
                   const _ePosShDev=Math.abs((_lastPos.shoulderTilt||0)-(_pEndRef.shoulderTilt||0));
                   const _ePosHtDev=Math.abs((_lastPos.hipTilt||0)-(_pEndRef.hipTilt||0));
-                  // 끝자세 판정: hipShift ≤ POS_THR*1.5 AND (shoulderTilt+hipTilt) ≤ POS_THR*1.5
-                  // start-pose보다 엄격한 기준 (끝자세와 시작자세의 혼동 방지)
-                  const _inEndPose=_ePosHsDev<=POS_THR.hipShift*1.5&&(_ePosShDev+_ePosHtDev)<=(POS_THR.shoulderTilt+POS_THR.hipTilt)*1.5;
-                  if(_inEndPose){
+                  // 방법1: 끝자세 직접 매칭 (기존 Work27 로직 완화)
+                  const _inEndPose=_ePosHsDev<=POS_THR.hipShift*2.0&&(_ePosShDev+_ePosHtDev)<=(POS_THR.shoulderTilt+POS_THR.hipTilt)*2.0;
+                  // 방법2: hipShift 진행률 기반 (시작→끝 이동량의 80% 도달 시 발동)
+                  let _inEndByProgress=false;
+                  if(_pStartRef&&Math.abs((_pEndRef.hipShift||0)-(_pStartRef.hipShift||0))>=8){
+                    const _totalRange=(_pEndRef.hipShift||0)-(_pStartRef.hipShift||0);
+                    const _curProgress=((_lastPos.hipShift||0)-(_pStartRef.hipShift||0))/_totalRange;
+                    _inEndByProgress=_curProgress>=0.80;
+                  }
+                  if(_inEndPose||_inEndByProgress){
                     _gateEndDetected=true;
                     // rep 즉시 카운팅 + 피드백 발화
                     if(_bestTimingPos!=null){
@@ -2660,12 +2669,15 @@ async function startRecording(){
   comp.width=cw; comp.height=ch;
   const compCtx=comp.getContext('2d');
   S.compCanvas=comp;
-  // [Work27-RecFix] iOS file mode: 뷰포트 안에 배치 → iOS Safari captureStream이 실제 프레임 캡처
-  // left:-9999px 오프스크린 배치 시 iOS가 캔버스 렌더링 생략 → captureStream 빈 청크 문제 수정
-  // z-index:-1로 모든 UI 뒤에 숨겨서 사용자에게 보이지 않도록 처리
+  // [Work28-RecFix] iOS file mode: comp 캔버스를 cam-wrap 내부에 배치 (position:absolute, full size)
+  // 문제: 2px 크기 + z-index:-1 → iOS Safari가 캔버스를 렌더링 생략 → captureStream 빈 청크
+  // 수정: cam-wrap 내부 first child로 삽입, 100% 크기, opacity:0.01 → iOS가 정상 렌더링
+  // cam-wrap의 overflow:hidden이 시각적 노출 방지, z-index:0으로 vid 위/cvs 아래
   if(_moduleIOSCam&&_srcMode==='file'){
-    comp.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;pointer-events:none;opacity:0.01;z-index:-1;';
-    document.body.appendChild(comp);
+    comp.style.cssText='position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;opacity:0.01;z-index:0;';
+    const _cw=$('cam-wrap');
+    if(_cw) _cw.insertBefore(comp, _cw.firstChild);
+    else document.body.appendChild(comp);
   }
 
   function drawComp(){
@@ -3191,6 +3203,13 @@ async function shareRecording(forceDownload){
     try{
       const file=new File([blob],fname,{type:blob.type});
       if(navigator.canShare({files:[file]})){
+        // [Work28-PhotosFix] iOS 공유 시트 안내 토스트: "비디오 저장" 탭 유도 (사진 앱 저장)
+        // "파일에 저장"을 누르면 파일 앱에 저장되므로 사진 앱 저장 방법 안내
+        const _shareToast=document.createElement('div');
+        _shareToast.textContent='📸 사진 앱 저장: 공유 화면에서 "비디오 저장"을 탭하세요';
+        _shareToast.style.cssText='position:fixed;bottom:20%;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;z-index:9999;text-align:center;max-width:280px;line-height:1.4;pointer-events:none;';
+        document.body.appendChild(_shareToast);
+        setTimeout(()=>{try{document.body.removeChild(_shareToast);}catch(e){}},4000);
         await navigator.share({files:[file],title:'APL Motion Coach'});
         return;
       }
@@ -4057,12 +4076,16 @@ function initOrientationSensor(){
 
 function extractPositions(kps){
   const ok = p => p && p.score >= CONF;
-  const okKnee = p => p != null; // [Work27-KneeFix] 무릎 신뢰도 임계값 완전 제거: 키포인트가 감지되기만 하면 사용(정면뷰에서 0.15도 '--' 표시되는 문제 근본 수정)
+  // [Work28-FrontalFix] 정면뷰 힙 전용 완화 임계값: 0.3→0.15
+  // 근본 원인: 정면 동적 동작 중 힙 신뢰도가 0.3 미만으로 떨어짐
+  // → extractPositions null 반환 → _lastPos=null → 무릎 '--' + 끝자세 감지 불가 → rep 2초 이상 지연
+  const okF = p => p && p.score >= 0.15; // [Work28-FrontalFix] 정면뷰 힙/무릎 전용 완화 임계값
+  const okKnee = p => p != null; // [Work27-KneeFix] 무릎 키포인트 존재만 확인
   const lHip=kps[11], rHip=kps[12], lKnee=kps[13], rKnee=kps[14];
   const lAnk=kps[15], rAnk=kps[16], lSh=kps[5], rSh=kps[6];
-  if(!ok(lHip)||!ok(rHip)) return null;
+  if(!okF(lHip)||!okF(rHip)) return null; // [Work28-FrontalFix] 힙 임계값 0.3→0.15
   const hipW = Math.abs(lHip.x - rHip.x);
-  if(hipW < 0.04) return null;
+  if(hipW < 0.02) return null; // [Work28-FrontalFix] hipW 0.04→0.02 (멀리서 촬영 대응)
   const R2D = 180/Math.PI;
 
   // ── 수평 기준(baseline) 결정: 센서 → 발목선 → 화면 수평 순 우선 ──────
@@ -4109,7 +4132,7 @@ function extractPositions(kps){
   // 전면 촬영: lHip.x > rHip.x → lKnee outward=우측(+x)이 맞지만, rKnee outward=좌측(-x)
   // → _lrSign으로 양쪽 모두 양수=바깥으로 정규화
   function kneeOff(hip,knee,ank){
-    if(!ok(hip)||!okKnee(knee)) return null; // [Work26-KneeFix] 무릎은 완화된 임계값(0.15) 적용
+    if(!okF(hip)||!okKnee(knee)) return null; // [Work28-FrontalFix] 힙 완화 임계값(0.15) 적용
     if(!ok(ank)){
       // [Work24-KneeFix] 발목 미감지 시: 무릎-힙 수평 편차(% of hipW) → 무릎 내반/외반 근사
       return Math.round(((knee.x-hip.x)/hipW)*100);

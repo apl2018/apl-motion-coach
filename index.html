@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v25</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v26</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -3025,9 +3025,9 @@ async function patchMP4Timestamps(blob,wallMs){
         const ts=meta.ts;
         if(!(tid in trackNext))trackNext[tid]=0;
         const tfhdFlags=u32(tfhd.dp)&0xFFFFFF;
-        let defDur=0,toff=tfhd.dp+8;
+        let defDur=0,defDurPos=-1,toff=tfhd.dp+8; // [Work26-RecFix] defDurPos: tfhd defDur 필드 위치 저장
         if(tfhdFlags&0x01)toff+=8; if(tfhdFlags&0x02)toff+=4;
-        if(tfhdFlags&0x08){defDur=u32(toff);toff+=4;}
+        if(tfhdFlags&0x08){defDurPos=toff;defDur=u32(toff);toff+=4;}
         if(tfhdFlags&0x10)toff+=4; if(tfhdFlags&0x20)toff+=4;
         const minDur=Math.max(1,Math.floor(ts/200)); // faster than 200fps = wrong
         const maxDur=ts*5;                            // longer than 5s = wrong
@@ -3047,12 +3047,13 @@ async function patchMP4Timestamps(blob,wallMs){
         }
         // Wall-clock corrected duration overrides everything for video tracks
         const wcd=wallCorrDur[tid]; // undefined for audio tracks or if no wallMs
-        let fragDur=0;
+        let fragDur=0,anyHasDur=false; // [Work26-RecFix] anyHasDur: trun에 per-sample duration 있는지 추적
         for(const trun of findAll(traf.dp,traf.pos+traf.size,'trun')){
           const tf=u32(trun.dp)&0xFFFFFF;const sc=u32(trun.dp+4);
           let to=trun.dp+8;
           if(tf&0x001)to+=4; if(tf&0x004)to+=4;
           const hasDur=!!(tf&0x100),hasSz=!!(tf&0x200),hasFlg=!!(tf&0x400),hasCTO=!!(tf&0x800);
+          if(hasDur) anyHasDur=true; // [Work26-RecFix]
           for(let i=0;i<sc;i++){
             if(hasDur){
               const dur=u32(to);
@@ -3071,6 +3072,12 @@ async function patchMP4Timestamps(blob,wallMs){
             }
             if(hasSz)to+=4; if(hasFlg)to+=4; if(hasCTO)to+=4;
           }
+        }
+        // [Work26-RecFix] trun에 per-sample duration 없는 경우(hasDur=false):
+        // iOS MediaRecorder가 tfhd default_sample_duration만 사용 → 잘못된 fps → 2배 길이 버그
+        // → tfhd 기본 duration 필드를 wall-clock 보정값으로 직접 덮어씀
+        if(wcd&&defDurPos>=0&&!anyHasDur&&wcd!==defDur){
+          dst.setUint32(defDurPos,wcd>>>0);anyFixed=true;
         }
         trackNext[tid]=(trackNext[tid]||0)+fragDur;
         meta.totalDur+=fragDur;
@@ -3481,9 +3488,9 @@ async function startLive(){
     {const _ab=document.querySelector('.dirbtn.on');if(_ab)S.dir=_ab.dataset.d;}
     {const _ll=$('pt-lbl-l'),_lr=$('pt-lbl-r');if(_ll&&_lr){_ll.textContent=S.dir==='front'?'우':'좌';_lr.textContent=S.dir==='front'?'좌':'우';}}
     // [Work17] frontFlip 버튼 제거됨
-    // [Work25-RepFix] Start frontal gate in timing+armed -> first arrival at gate pos = rep #1
-    {const _fPGR25=_gateEntryPos[S.ex.id]||_posRef[S.ex.id];
-     if(_fPGR25){_gateState='timing';_gateArmed=true;_gateLastPrimeT=Date.now()-_MIN_REP_MS;}}
+    // [Work26-GateFix] Work25-RepFix 롤백: gate는 idle에서 시작
+    // Work25-RepFix 문제: timing+armed 시작 → 어드레스(≈백스윙 메트릭) 즉시 rep#1 카운팅
+    // 정상 흐름: idle → entry(시작자세 감지) → timing(이탈, armed) → entry(복귀) → rep 카운팅
   } else {
     $('abar').classList.add('on');
     $('pos-bar').classList.remove('on');
@@ -4006,8 +4013,10 @@ function initOrientationSensor(){
     // iOS 13+ : 사용자 제스처 컨텍스트에서 호출 필요
     DeviceOrientationEvent.requestPermission()
       .then(state => {
-        if(state === 'granted')
+        if(state === 'granted'){
+          _sensorReady = true; // [Work26-GyroFix] 권한 허용 즉시 활성화 → 첫 이벤트 전에도 '자이로' 표시
           window.addEventListener('deviceorientation', _onOrientation, true);
+        }
       })
       .catch(e => console.warn('[Sensor] DeviceOrientation permission:', e));
   } else {
@@ -4018,6 +4027,7 @@ function initOrientationSensor(){
 
 function extractPositions(kps){
   const ok = p => p && p.score >= CONF;
+  const okKnee = p => p && p.score >= 0.15; // [Work26-KneeFix] 정면뷰 무릎 검출 임계값 완화(0.3→0.15): 정면뷰에서 무릎 신뢰도가 낮아 '--' 표시되는 문제 수정
   const lHip=kps[11], rHip=kps[12], lKnee=kps[13], rKnee=kps[14];
   const lAnk=kps[15], rAnk=kps[16], lSh=kps[5], rSh=kps[6];
   if(!ok(lHip)||!ok(rHip)) return null;
@@ -4069,7 +4079,7 @@ function extractPositions(kps){
   // 전면 촬영: lHip.x > rHip.x → lKnee outward=우측(+x)이 맞지만, rKnee outward=좌측(-x)
   // → _lrSign으로 양쪽 모두 양수=바깥으로 정규화
   function kneeOff(hip,knee,ank){
-    if(!ok(hip)||!ok(knee)) return null;
+    if(!ok(hip)||!okKnee(knee)) return null; // [Work26-KneeFix] 무릎은 완화된 임계값(0.15) 적용
     if(!ok(ank)){
       // [Work24-KneeFix] 발목 미감지 시: 무릎-힙 수평 편차(% of hipW) → 무릎 내반/외반 근사
       return Math.round(((knee.x-hip.x)/hipW)*100);
@@ -4632,10 +4642,6 @@ async function init(){
     document.body.appendChild(rb);
   }
   speechSynthesis.getVoices();
-  // [Work25-GyroFix] Android/old-iOS: no permission needed, init at load
-  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission!=='function'){
-    initOrientationSensor();
-  }
 }
 
 window.addEventListener('load',init);

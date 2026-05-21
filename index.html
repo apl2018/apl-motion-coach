@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v23</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v24</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1446,11 +1446,18 @@ async function _runDetection(){
             if(_pRef2Gt&&_lastPos){
               const _hsDev=Math.abs((_lastPos.hipShift||0)-(_pRef2Gt.hipShift||0));
               const _shDev=Math.abs((_lastPos.shoulderTilt||0)-(_pRef2Gt.shoulderTilt||0));
-              // [Work23-GateFix] 발목 미감지(hipShift===0) 시 hipShift 비교 skip → shoulderTilt만 사용
-              // 정면 분析에서 발목은 신뢰도 낮아 hipShift=0이 됨 → 기준값과 불일치 → 게이트 고착 버그
-              // live hipShift 또는 ref hipShift 중 하나라도 0이면 측정 불가 → 그 비교만 skip
+              // [Work24-GateFix] 발목 미감지 시: shoulderTilt+hipTilt 합산 편차로 게이트 민감도 향상
+              // shoulderTilt 단독 역치(15°)가 넓어 운동 중에도 게이트 항상 진입 → 횟수 미카운팅
+              // hipTilt 추가: 편측 운동 시 hip drop 감지로 게이트 개폐 정확도 개선
               const _hsUsable=Math.abs(_lastPos.hipShift||0)>=1&&Math.abs(_pRef2Gt.hipShift||0)>=1;
-              _fInGate=(!_hsUsable||_hsDev<=POS_THR.hipShift*2)&&_shDev<=POS_THR.shoulderTilt*3;
+              const _htDev=Math.abs((_lastPos.hipTilt||0)-(_pRef2Gt.hipTilt||0));
+              if(_hsUsable){
+                _fInGate=_hsDev<=POS_THR.hipShift*2&&_shDev<=POS_THR.shoulderTilt*3;
+              }else{
+                // shoulderTilt+hipTilt 합산 ≤ (5+5)×2=20° → 시작자세 인정
+                // 어느 한 지표라도 ~10° 이상 변하면 게이트 이탈(운동 중) 감지
+                _fInGate=(_shDev+_htDev)<=(POS_THR.shoulderTilt+POS_THR.hipTilt)*2;
+              }
             } else {
               _fInGate=false; // 시작자세 미설정 시 게이트 판단 불가
             }
@@ -1512,6 +1519,7 @@ async function _runDetection(){
           if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak&&_gateState!=='timing'){
             let _gFb=null;
             if(_lastPosCmp&&!posAllGood(_lastPosCmp)){_gFb=posFeedbackStr(_lastPosCmp);}
+            else if(_lastPosCmp&&posAllGood(_lastPosCmp)){const _pr=TX[CL].PRAISE;if(_pr)_gFb=_pr[Math.floor(Math.random()*_pr.length)];} // [Work24-FBFix] 자세 완벽 시 칭찬
             else if(!_lastPosCmp&&_lastPos){_gFb=posAbsFeedback(_lastPos);}
             if(_gFb){speak(_gFb);S.lastFB=now2;S.fbLog[_gFb]=(S.fbLog[_gFb]||0)+1;}
           }
@@ -4056,7 +4064,11 @@ function extractPositions(kps){
   // 전면 촬영: lHip.x > rHip.x → lKnee outward=우측(+x)이 맞지만, rKnee outward=좌측(-x)
   // → _lrSign으로 양쪽 모두 양수=바깥으로 정규화
   function kneeOff(hip,knee,ank){
-    if(!ok(hip)||!ok(knee)||!ok(ank)) return null;
+    if(!ok(hip)||!ok(knee)) return null;
+    if(!ok(ank)){
+      // [Work24-KneeFix] 발목 미감지 시: 무릎-힙 수평 편차(% of hipW) → 무릎 내반/외반 근사
+      return Math.round(((knee.x-hip.x)/hipW)*100);
+    }
     const dy=hip.y-ank.y; if(Math.abs(dy)<0.02) return null;
     const t=(knee.y-ank.y)/dy;
     return Math.round(((knee.x-(ank.x+t*(hip.x-ank.x)))/hipW)*100);

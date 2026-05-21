@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v29</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v30</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1492,6 +1492,8 @@ async function _runDetection(){
             _gateInGateStartT=0; // [Issue2 FIX] 게이트 이탈 시 debounce 리셋
             if(_gateState==='entry'){
               _gateState='timing';_gateLastPrimeT=now2;_gateEndDetected=false;
+              // [Work30-RepFix] entry→timing 전환 시 현재 실제 위치 캡처 (localStorage stale 데이터 대신)
+              _gateEntryPosLive=_lastPos?{..._lastPos}:null;
               // [Work22-RepFix] 정면분析: 항상 arm → 1렙 완료 직후 2렙도 카운팅
               // 기존: _MIN_REP_MS(800ms) 체크로 1렙 직후 entry→timing 전환 시 _gateArmed=false
               // → 연속 2렙에서 2번째 렙 미카운팅 버그. 위치기반+200ms debounce로 충분히 방지
@@ -1513,17 +1515,22 @@ async function _runDetection(){
               // 수정3: Fix A(_lastPos null→유효)로 인해 끝자세 감지 자체가 동작하게 됨
               if(_gateArmed&&!_gateEndDetected&&isFrontal()){
                 const _pEndRef=_posRef[S.ex.id];
-                const _pStartRef=_gateEntryPos?_gateEntryPos[S.ex.id]:null;
+                // [Work30-RepFix] _gateEntryPosLive 우선 사용 (현재 세션 실시간 캡처)
+                // fallback: localStorage 기반 _gateEntryPos (구버전 호환)
+                const _pStartRef=_gateEntryPosLive||(_gateEntryPos?_gateEntryPos[S.ex.id]:null);
                 // [Work29-RepFix] 최소 대기 500ms (300ms는 너무 짧아 과다 카운팅 유발)
                 if(_pEndRef&&_lastPos&&(now2-_gateLastPrimeT)>=500){
                   const _ePosHsDev=Math.abs((_lastPos.hipShift||0)-(_pEndRef.hipShift||0));
                   const _ePosShDev=Math.abs((_lastPos.shoulderTilt||0)-(_pEndRef.shoulderTilt||0));
                   const _ePosHtDev=Math.abs((_lastPos.hipTilt||0)-(_pEndRef.hipTilt||0));
+                  // [Work30-RepFix] 시작 위치에서 최소 이동 확인 (stale hipShift=0 오발동 방지)
+                  // _pStartRef.hipShift가 유효할 때만: 현재 위치가 시작점에서 ≥5% 이상 이동해야 카운팅 허용
+                  const _movedFromStart=!_pStartRef||Math.abs((_lastPos.hipShift||0)-(_pStartRef.hipShift||0))>=5;
                   // 방법1: 끝자세 직접 매칭
-                  const _inEndPose=_ePosHsDev<=POS_THR.hipShift*1.5&&(_ePosShDev+_ePosHtDev)<=(POS_THR.shoulderTilt+POS_THR.hipTilt)*1.5;
+                  const _inEndPose=_movedFromStart&&_ePosHsDev<=POS_THR.hipShift*1.5&&(_ePosShDev+_ePosHtDev)<=(POS_THR.shoulderTilt+POS_THR.hipTilt)*1.5;
                   // 방법2: hipShift 진행률 기반 (시작→끝 이동량의 80% 도달 시 발동)
                   let _inEndByProgress=false;
-                  if(_pStartRef&&Math.abs((_pEndRef.hipShift||0)-(_pStartRef.hipShift||0))>=8){
+                  if(_movedFromStart&&_pStartRef&&Math.abs((_pEndRef.hipShift||0)-(_pStartRef.hipShift||0))>=8){
                     const _totalRange=(_pEndRef.hipShift||0)-(_pStartRef.hipShift||0);
                     const _curProgress=((_lastPos.hipShift||0)-(_pStartRef.hipShift||0))/_totalRange;
                     _inEndByProgress=_curProgress>=0.80;
@@ -2190,6 +2197,7 @@ const OSC_MAX_DEV=80; // only count rep if closest approach ≤80° avg deviatio
 //             300ms 뒤에 피드백 1회 발화하는 타이머 기반 방식
 let _gateEntryRef = {};     // {[exId]: angles} — 진입 자세 (운동별 저장)
 let _gateEntryPos = {};     // [FIX-FrontalRep] {[exId]: pos} — 정면 게이트 위치 기준 (각도 null일 때 fallback)
+let _gateEntryPosLive = null; // [Work30-RepFix] 현재 세션 entry→timing 전환 시 실시간 캡처 위치 (localStorage stale 데이터 대신 사용)
 let _gateState = 'idle';    // 'idle' | 'entry' | 'timing'
 let _gateLastPrimeT = 0;    // timing 진입 시각 (타임아웃용)
 let _gateWasInZone = false; // 호환성 유지 (미사용)
@@ -2684,7 +2692,10 @@ async function startRecording(){
   //       → canvas 픽셀 버퍼는 정상 사이즈로 렌더링됨, 화면에는 ~1px로 표시 (사용자 비인지)
   //       → opacity:1.0 유지 → iOS 렌더링 최적화 스킵 안 함
   if(_moduleIOSCam&&_srcMode==='file'){
-    comp.style.cssText=`position:fixed;left:0;top:0;width:${cw}px;height:${ch}px;transform:scale(0.001);transform-origin:0 0;pointer-events:none;opacity:1;z-index:-1;`;
+    // [Work30-RecFix] z-index:-1 → z-index:9999
+    // iOS Safari는 z-index 음수 요소를 렌더링 스킵 최적화 적용 → captureStream 빈 화면
+    // transform:scale(0.001)으로 화면에는 ~1px만 표시되며, z-index:9999로 iOS 렌더링 보장
+    comp.style.cssText=`position:fixed;left:0;top:0;width:${cw}px;height:${ch}px;transform:scale(0.001);transform-origin:0 0;pointer-events:none;opacity:1;z-index:9999;`;
     document.body.appendChild(comp);
   }
 
@@ -3523,6 +3534,7 @@ async function startLive(){
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
   _gateState='idle';_gateLastPrimeT=0;_gateWasInZone=false;_gateSpeechSkip=false;_lastRepT=0;_pendingGateFB=null;
   _gateArmed=false; _gateEndDetected=false; _gateInGateStartT=0; // [Issue2 FIX]
+  _gateEntryPosLive=null; // [Work30-RepFix] 세션 시작 시 실시간 진입 위치 초기화
   if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
   _repPosSnapshots=[];_bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity; // [BUG5-FIX]
   resetRepOsc();
@@ -4064,7 +4076,19 @@ function initOrientationSensor(){
   function _onOrientation(e){
     if(e.gamma == null) return;
     _deviceGamma = _deviceGamma * 0.7 + e.gamma * 0.3;
-    if(!_sensorReady) _sensorReady = true;
+    if(!_sensorReady){
+      _sensorReady = true;
+      // [Work30-GyroFix] 첫 이벤트 수신 시 즉시 라벨 업데이트 (updatePosBar 호출 전에도 반영)
+      try{
+        const _sl=document.getElementById('pm-sensor-lbl');
+        if(_sl){
+          const _g=Math.round(_deviceGamma*10)/10;
+          _sl.textContent='수평기준: 자이로 (γ'+(_g>=0?'+':'')+_g+'°)';
+          _sl.style.color='rgba(100,220,100,.6)';
+          _sl.style.fontSize='';_sl.style.fontWeight='';
+        }
+      }catch(_e){}
+    }
   }
   // 리스너 먼저 등록 (Android + 이미 권한 허용된 iOS에서 즉시 이벤트 수신)
   try{ window.addEventListener('deviceorientation', _onOrientation, true); }catch(e){}
@@ -4074,6 +4098,16 @@ function initOrientationSensor(){
       .then(state => {
         if(state === 'granted'){
           _sensorReady = true; // [Work26-GyroFix] 권한 허용 즉시 활성화 → 첫 이벤트 전에도 '자이로' 표시
+          // [Work30-GyroFix] 권한 허용 즉시 라벨 업데이트
+          try{
+            const _sl2=document.getElementById('pm-sensor-lbl');
+            if(_sl2){
+              const _g2=Math.round(_deviceGamma*10)/10;
+              _sl2.textContent='✅ 자이로 활성 (γ'+(_g2>=0?'+':'')+_g2+'°)';
+              _sl2.style.color='rgba(100,220,100,.9)';
+              _sl2.style.fontSize='';_sl2.style.fontWeight='';
+            }
+          }catch(_e2){}
           // 리스너는 위에서 이미 등록됨
         }
       })
@@ -4096,7 +4130,7 @@ function extractPositions(kps){
   const lAnk=kps[15], rAnk=kps[16], lSh=kps[5], rSh=kps[6];
   if(!okF(lHip)||!okF(rHip)) return null; // [Work28-FrontalFix] 힙 임계값 0.3→0.15
   const hipW = Math.abs(lHip.x - rHip.x);
-  if(hipW < 0.02) return null; // [Work28-FrontalFix] hipW 0.04→0.02 (멀리서 촬영 대응)
+  if(hipW < 0.005) return null; // [Work30-KneeFix] hipW 0.02→0.005 (더 먼 거리 촬영 대응, 무릎 '--' 방지)
   const R2D = 180/Math.PI;
 
   // ── 수평 기준(baseline) 결정: 센서 → 발목선 → 화면 수평 순 우선 ──────
@@ -4148,7 +4182,8 @@ function extractPositions(kps){
       // [Work24-KneeFix] 발목 미감지 시: 무릎-힙 수평 편차(% of hipW) → 무릎 내반/외반 근사
       return Math.round(((knee.x-hip.x)/hipW)*100);
     }
-    const dy=hip.y-ank.y; if(Math.abs(dy)<0.02) return null;
+    const dy=hip.y-ank.y;
+    if(Math.abs(dy)<0.02) return Math.round(((knee.x-hip.x)/hipW)*100); // [Work30-KneeFix] null 대신 hip-knee 편차로 fallback
     const t=(knee.y-ank.y)/dy;
     return Math.round(((knee.x-(ank.x+t*(hip.x-ank.x)))/hipW)*100);
   }

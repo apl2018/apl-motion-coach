@@ -1482,7 +1482,10 @@ async function _runDetection(){
             _gateInGateStartT=0; // [Issue2 FIX] 게이트 이탈 시 debounce 리셋
             if(_gateState==='entry'){
               _gateState='timing';_gateLastPrimeT=now2;_gateEndDetected=false;
-              _gateArmed=(now2-_lastRepT>=_MIN_REP_MS);
+              // [Work22-RepFix] 정면분析: 항상 arm → 1렙 완료 직후 2렙도 카운팅
+              // 기존: _MIN_REP_MS(800ms) 체크로 1렙 직후 entry→timing 전환 시 _gateArmed=false
+              // → 연속 2렙에서 2번째 렙 미카운팅 버그. 위치기반+200ms debounce로 충분히 방지
+              _gateArmed=isFrontal()?true:(now2-_lastRepT>=_MIN_REP_MS);
               // [Issue4 FIX] 정면 분석 이중발화 방지: 백업 타이머 제거
               // 피드백은 시작자세 복귀 감지(위 timing→entry 전환)에서만 발화
               // _GATE_PRIME_TIMEOUT(12s) 초과 시 idle 복귀는 아래 else-if에서 처리
@@ -1501,7 +1504,9 @@ async function _runDetection(){
           // [Work20-FBFix] 게이트 경로에서도 시간 기반 위치 피드백 허용
           // _posRef 있으면 else(게이트없음)블록에 진입 불가 → 기준자세 있어도 정기 코칭 발화
           // 렙 완료 피드백(setTimeout _GATE_FB_DELAY)이 S.lastFB를 갱신하므로 이중발화 방지됨
-          if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak){
+          // [Work22-FBFix] timing 상태(시작자세 이탈, 운동 중)에서는 피드백 억제
+          // 기준자세1→기준자세2 사이 불필요한 피드백 방지 (entry 상태=시작자세에서만 발화)
+          if(now2-S.startTime>=_START_DELAY&&now2-S.lastFB>=_FB_INTERVAL&&!S.speak&&_gateState!=='timing'){
             let _gFb=null;
             if(_lastPosCmp&&!posAllGood(_lastPosCmp)){_gFb=posFeedbackStr(_lastPosCmp);}
             else if(!_lastPosCmp&&_lastPos){_gFb=posAbsFeedback(_lastPos);}
@@ -2775,7 +2780,10 @@ async function startRecording(){
 
   // MediaRecorder
   let mime;
-  if(_isIOSCam){
+  // [Work22-RecFix] iOS 파일모드도 동일하게 MIME 무옵션 MediaRecorder 사용
+  // _isIOSCam=camera전용이라 파일모드에서 false → mimePriority 배열 적용 → iOS 미지원 MIME → chunks 빈값 → 원본저장
+  // _moduleIOSCam=전체 iOS → 파일+카메라 모두 simple MediaRecorder(no options) 사용
+  if(_moduleIOSCam){
     try{S.recorder=new MediaRecorder(compStream);}
     catch(e){console.warn('iOS recorder:',e);saveRecording([]);return;}
     mime=S.recorder.mimeType||'video/mp4';
@@ -3451,6 +3459,10 @@ async function startLive(){
     const tw=$('traj-wrap'); if(tw) tw.classList.add('on');
     const tc=$('traj-cvs');
     if(tc&&tc.offsetWidth) tc.width=tc.offsetWidth;
+    // [Work22-DirFix] 분析 시작 시 UI 버튼과 S.dir 동기화 + 슬라이더 라벨 즉시 초기화
+    // S.dir이 JS 상태와 버튼 UI 상태가 어긋날 수 있어 매 분析 시작 시 동기화
+    {const _ab=document.querySelector('.dirbtn.on');if(_ab)S.dir=_ab.dataset.d;}
+    {const _ll=$('pt-lbl-l'),_lr=$('pt-lbl-r');if(_ll&&_lr){_ll.textContent=S.dir==='front'?'우':'좌';_lr.textContent=S.dir==='front'?'좌':'우';}}
     // [Work17] frontFlip 버튼 제거됨
   } else {
     $('abar').classList.add('on');
@@ -4578,7 +4590,7 @@ async function init(){
   try{
     S.det=await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
-      {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
+            {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
     );
     if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
     S.ready=true;

@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v26</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v27</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1506,6 +1506,32 @@ async function _runDetection(){
               if(now2-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
                 clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
                 _gateArmed=false;_gateEndDetected=false;_gateState='idle';
+              }
+              // [Work27-EndPoseFix] 정면分析: timing 단계에서 끝자세(기준자세/_posRef) 도달 즉시 rep 카운팅
+              // 기존: 시작자세 복귀 시 rep 카운팅 (느림). 변경: 끝자세 도달 즉시 카운팅 (빠름)
+              if(_gateArmed&&!_gateEndDetected&&isFrontal()){
+                const _pEndRef=_posRef[S.ex.id];
+                if(_pEndRef&&_lastPos&&(now2-_gateLastPrimeT)>=_MIN_REP_MS){
+                  const _ePosHsDev=Math.abs((_lastPos.hipShift||0)-(_pEndRef.hipShift||0));
+                  const _ePosShDev=Math.abs((_lastPos.shoulderTilt||0)-(_pEndRef.shoulderTilt||0));
+                  const _ePosHtDev=Math.abs((_lastPos.hipTilt||0)-(_pEndRef.hipTilt||0));
+                  // 끝자세 판정: hipShift ≤ POS_THR*1.5 AND (shoulderTilt+hipTilt) ≤ POS_THR*1.5
+                  // start-pose보다 엄격한 기준 (끝자세와 시작자세의 혼동 방지)
+                  const _inEndPose=_ePosHsDev<=POS_THR.hipShift*1.5&&(_ePosShDev+_ePosHtDev)<=(POS_THR.shoulderTilt+POS_THR.hipTilt)*1.5;
+                  if(_inEndPose){
+                    _gateEndDetected=true;
+                    // rep 즉시 카운팅 + 피드백 발화
+                    if(_bestTimingPos!=null){
+                      _repPosSnapshots.push({pos:{..._bestTimingPos},cmp:_bestTimingCmp?{..._bestTimingCmp}:null});
+                    }
+                    _bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity;
+                    _gateArmed=false;_gateEndDetected=false;_lastRepT=now2;_gateState='entry';
+                    S.repCount++;$('rep-num').textContent=S.repCount;$('rep-badge').classList.add('on');
+                    const _gRet3=_lastCmp;
+                    S.lastFB=now2;S.speak=false;try{speechSynthesis.cancel();}catch(e){}
+                    setTimeout(()=>{if(S.speak)return;let _ft=null;if(_lastPosCmp&&!posAllGood(_lastPosCmp)){_ft=posFeedbackStr(_lastPosCmp);}else if(_lastPosCmp&&posAllGood(_lastPosCmp)){const _pr=TX[CL].PRAISE;if(_pr)_ft=_pr[Math.floor(Math.random()*_pr.length)];}else if(!_lastPosCmp&&_lastPos){_ft=posAbsFeedback(_lastPos);}else if(_gRet3){const _fo=overall(_gRet3);if(_fo==='good'){const _pr2=TX[CL].PRAISE;if(_pr2)_ft=_pr2[Math.floor(Math.random()*_pr2.length)];}else{const _ffb=primaryFB(_gRet3);if(_ffb){const _fm=getFBMsg(_ffb);if(_fm)_ft=_fm;}}}if(_ft){speak(_ft);}S.lastFB=Date.now();},_GATE_FB_DELAY);
+                  }
+                }
               }
               // [Work16-Fix3] devToRef 제거 (Work15-Fix4b 롤백): 이중발화 방지 위해 삽입했으나
               // threshold가 너무 느슨해 조기 감지 → 피드백/카운팅 모두 무력화되는 버그 유발
@@ -2634,9 +2660,11 @@ async function startRecording(){
   comp.width=cw; comp.height=ch;
   const compCtx=comp.getContext('2d');
   S.compCanvas=comp;
-  // [Work25-RecFix] iOS file mode: DOM attach so captureStream gets real frames
+  // [Work27-RecFix] iOS file mode: 뷰포트 안에 배치 → iOS Safari captureStream이 실제 프레임 캡처
+  // left:-9999px 오프스크린 배치 시 iOS가 캔버스 렌더링 생략 → captureStream 빈 청크 문제 수정
+  // z-index:-1로 모든 UI 뒤에 숨겨서 사용자에게 보이지 않도록 처리
   if(_moduleIOSCam&&_srcMode==='file'){
-    comp.style.cssText='position:fixed;left:-9999px;top:0;width:1px;height:1px;pointer-events:none;opacity:0.01;';
+    comp.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;pointer-events:none;opacity:0.01;z-index:-1;';
     document.body.appendChild(comp);
   }
 
@@ -2654,8 +2682,9 @@ async function startRecording(){
       if(S.live) stopLive(); else if(S.recorder&&S.recorder.state==='recording') stopRecording();
       return;
     }
-    // [Issue1 FIX v4] 파일 모드: frozen frame 2프레임 연속(66ms) + 50% 이상 진행 → 즉시 종료
-    // vid.paused/ended iOS 미발화 문제 완전 우회 — 상태 플래그 없이 currentTime 변화만 감지
+    // [Work27-RecFix] 파일 모드: frozen frame 2프레임 연속(66ms) + 50% 이상 진행 → 즉시 종료
+    // [Work27-RecFix] 핵심 변경: frozen frame도 캔버스 드로우 후 종료 체크 (return 제거)
+    // → iOS captureStream이 항상 유효한 프레임을 수신 → 빈 청크 문제 해결
     if(_srcMode==='file'&&vid.currentTime>0){
       const _ct=vid.currentTime;
       if(_ct===_lastDrawCompVidTime){
@@ -2670,11 +2699,13 @@ async function startRecording(){
           // [Work18-RecFix] compStream track 정지는 recorder.onstop에서 처리
           try{compCtx.clearRect(0,0,cw,ch);}catch(e){}
           if(S.live) stopLive(); else if(S.recorder&&S.recorder.state==='recording') stopRecording();
+          return; // 종료 처리 후 더 이상 드로우 불필요
         }
-        return; // frozen frame: 캡처 스킵
+        // frozen이지만 아직 종료 조건 미충족: 드로우는 계속 (captureStream 프레임 공급 유지)
+      } else {
+        _frozenCompFrames=0; // 진행 중 → 카운터 리셋
+        _lastDrawCompVidTime=_ct;
       }
-      _frozenCompFrames=0; // 진행 중 → 카운터 리셋
-      _lastDrawCompVidTime=_ct;
     }
     try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
     // 스켈레톤 오버레이: 캐시된 _lastKps 사용 (TF.js 직접 호출 없음)
@@ -3531,8 +3562,8 @@ async function startLive(){
     S._stallInterval=setInterval(()=>{
       if(!S.live){clearInterval(S._stallInterval);return;}
       const ct=vid.currentTime,d=vid.duration;
-      // ① 영상 90% 이상 진행 → 즉시 종료 (frozen 여부 무관) [Issue1 FIX v4] 0.98→0.90
-      if(d>0&&isFinite(d)&&ct>=d*0.90){
+      // ① 영상 99% 이상 진행 → 즉시 종료 (frozen 여부 무관) [Work27-RecFix] 0.90→0.99: frozen frame 감지가 정확히 처리하므로 조기 종료 방지
+      if(d>0&&isFinite(d)&&ct>=d*0.99){
         clearInterval(S._stallInterval);
         if(S.live) stopLive();
         return;
@@ -4000,34 +4031,33 @@ const _deg1 = v => Math.round(v*10)/10; // 소수점 1자리 반올림
 
 // ── DeviceOrientation 센서 (정면/후면 수평 기준 보정) ──────────────────────
 function initOrientationSensor(){
-  // [FIX-Gyro v3] bak_v39 복원: guard 유지 + deviceorientationabsolute 제거
-  // _sensorReady guard: 이미 활성화된 경우 재호출 불필요 (tap-to-retry는 _sensorReady=false 시에만 호출됨)
+  // [Work27-GyroFix] 리스너를 requestPermission 전에 먼저 등록 → 이미 권한 있는 iOS + Android 즉시 활성화
   if(_sensorReady) return;
   if(typeof DeviceOrientationEvent === 'undefined') return;
   function _onOrientation(e){
     if(e.gamma == null) return;
     _deviceGamma = _deviceGamma * 0.7 + e.gamma * 0.3;
-    _sensorReady = true;
+    if(!_sensorReady) _sensorReady = true;
   }
+  // 리스너 먼저 등록 (Android + 이미 권한 허용된 iOS에서 즉시 이벤트 수신)
+  try{ window.addEventListener('deviceorientation', _onOrientation, true); }catch(e){}
   if(typeof DeviceOrientationEvent.requestPermission === 'function'){
     // iOS 13+ : 사용자 제스처 컨텍스트에서 호출 필요
     DeviceOrientationEvent.requestPermission()
       .then(state => {
         if(state === 'granted'){
           _sensorReady = true; // [Work26-GyroFix] 권한 허용 즉시 활성화 → 첫 이벤트 전에도 '자이로' 표시
-          window.addEventListener('deviceorientation', _onOrientation, true);
+          // 리스너는 위에서 이미 등록됨
         }
       })
       .catch(e => console.warn('[Sensor] DeviceOrientation permission:', e));
-  } else {
-    // Android / 구형 iOS — 권한 불필요
-    window.addEventListener('deviceorientation', _onOrientation, true);
   }
+  // else: Android / 구형 iOS — 권한 불필요, 리스너 이미 등록됨
 }
 
 function extractPositions(kps){
   const ok = p => p && p.score >= CONF;
-  const okKnee = p => p && p.score >= 0.15; // [Work26-KneeFix] 정면뷰 무릎 검출 임계값 완화(0.3→0.15): 정면뷰에서 무릎 신뢰도가 낮아 '--' 표시되는 문제 수정
+  const okKnee = p => p != null; // [Work27-KneeFix] 무릎 신뢰도 임계값 완전 제거: 키포인트가 감지되기만 하면 사용(정면뷰에서 0.15도 '--' 표시되는 문제 근본 수정)
   const lHip=kps[11], rHip=kps[12], lKnee=kps[13], rKnee=kps[14];
   const lAnk=kps[15], rAnk=kps[16], lSh=kps[5], rSh=kps[6];
   if(!ok(lHip)||!ok(rHip)) return null;
@@ -4271,7 +4301,7 @@ function updatePosBar(pos, cmp){
       sensorLbl.style.color='rgba(255,200,80,.5)';
     } else {
       // [FIX-Gyro] 자이로 미활성: 탭 유도 힌트 (더 크고 밝게)
-      sensorLbl.textContent=typeof DeviceOrientationEvent!=='undefined'?'📱 여기 탭 → 자이로 활성화':'수평기준: 화면';
+      sensorLbl.textContent=typeof DeviceOrientationEvent!=='undefined'?'📱 여기 탭 → 자이로 활성화':'수평기준: 화면 수평';
       sensorLbl.style.color='rgba(255,210,50,.95)';
       sensorLbl.style.fontSize='11px';
       sensorLbl.style.fontWeight='700';
@@ -4577,7 +4607,6 @@ async function init(){
         alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
         _clearSave();
       }
-    } else if(navigator.canShare&&navigator.canShare({files:[file]})){
       navigator.share({files:[file],title:'APL Motion Coach',text:fname})
         .then(_clearSave)
         .catch(err=>{if(err.name!=='AbortError'){downloadVideo(blob,fname);_clearSave();}});

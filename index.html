@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v34</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v35</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1177,16 +1177,7 @@ function kpColor(idx,cmp){
 }
 function drawFrame(kps,cmp){
   ctx.clearRect(0,0,cvs.width,cvs.height);
-  // [Work33-RecFix] 녹화 중: cvs에 vid 프레임을 먼저 그림
-  // cvs는 DOM에 항상 가시적으로 존재 → cvs.captureStream()이 iOS 포함 전 기기에서 신뢰성 있게 동작
-  // 스켈레톤은 vid 위에 오버레이로 그려짐 (coverXY와 동일한 contain 스케일링)
-  if(_compDrawing){
-    try{
-      const _vw=vid.videoWidth||1,_vh=vid.videoHeight||1;
-      const _sc=Math.min(cvs.width/_vw,cvs.height/_vh);
-      ctx.drawImage(vid,(cvs.width-_vw*_sc)/2,(cvs.height-_vh*_sc)/2,_vw*_sc,_vh*_sc);
-    }catch(e){}
-  }
+  // [Work35-RecFix] drawFrame은 skeleton/overlay만 cvs에 그림 — vid 합성은 drawComp(compCtx)에서
   const _frontal=isFrontal();
   for(const[i,j]of SKEL){
     // 정면/후면: 어깨↔골반 측면선 제거 (몸통기울기 선으로 대체)
@@ -1390,6 +1381,8 @@ async function _runDetection(){
         _lastPos=pos;
         const posRef=_posRef[S.ex.id]||null;
         _lastPosCmp=posRef?comparePos(pos,posRef):null;
+        // [Work35-CmpSmooth] cmp 버퍼 누적 (최근 20개 → avgPosCmp()에서 1.5초 내 평균 사용)
+        if(_lastPosCmp){_posCmpBuf.push({t:Date.now(),cmp:_lastPosCmp});if(_posCmpBuf.length>20)_posCmpBuf.shift();}
         if(pos) pushPosHistory(pos);
         // [BUG5-FIX] 기준자세 타이밍 최적 프레임 추적 (Issue5: per-rep snapshot 점수)
         if(_gateState==='timing'&&pos){
@@ -1614,16 +1607,19 @@ async function _runDetection(){
               // 효과: 운동 후 3.5초 후 기준자세 근방이면 자동 발화
             }
             else {
+              // [Work35-CmpSmooth] 시간기반 피드백: 단일 프레임(_lastPosCmp) 대신 1.5초 평균(avgPosCmp()) 사용
+              // → 매 분析마다 TF.js GPU 타이밍 달라도 동일 방향 피드백 발화 (비결정성 제거)
+              const _stableCmp=_lastPosCmp?avgPosCmp():null;
               let fb=null;
-              if(_lastPosCmp&&!posAllGood(_lastPosCmp)){
-                fb=posFeedbackStr(_lastPosCmp);
-              } else if(!_lastPosCmp&&_lastPos){ // [Work19-FBFix] 정면 절대값 피드백 허용
+              if(_stableCmp&&!posAllGood(_stableCmp)){
+                fb=posFeedbackStr(_stableCmp);
+              } else if(!_stableCmp&&_lastPos){ // [Work19-FBFix] 정면 절대값 피드백 허용
                 // [FIX-FrontalFB v3] 정면/후면: 기준자세 없으면 절대값 피드백 완전 억제
                 // 기준자세 없이 절대 임계값으로 교정 지시 → 선수 개인차 무시한 부적절 발화
                 fb=posAbsFeedback(_lastPos);
               }
               if(fb){speak(fb);S.lastFB=now2;S.fbLog[fb]=(S.fbLog[fb]||0)+1;}
-              else if((_lastPosCmp&&posAllGood(_lastPosCmp))||(!_lastPosCmp&&_lastPos)){
+              else if((_stableCmp&&posAllGood(_stableCmp))||(!_stableCmp&&_lastPos)){
                 S.lastFB=now2; // 칭찬이어도 lastFB 갱신 → 이중발화 방지
                 if(now2-S.lastPr>9000){
                   const PR=TX[CL].PRAISE;
@@ -2823,21 +2819,18 @@ async function startRecording(){
   try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
   S.drawCompInterval=setInterval(drawComp,33);
 
-  // [Work34-RecFix] cvs.captureStream(): DOM 상시 가시적 canvas → iOS 포함 전 기기 신뢰성 보장
-  // drawFrame()이 _compDrawing=true 시 vid+스켈레톤을 cvs에 합성 그림 → captureStream이 완전한 영상 캡처
-  // [PATTERN-2 FIX] getVideoTracks().length===0 체크 완전 제거:
-  //   → 일부 브라우저에서 트랙이 비동기로 추가되므로 즉시 체크하면 항상 0으로 보임
-  //   → 0 체크 시 throw → catch의 fallback(new MediaStream() 빈 스트림) 실행 → 빈 chunks → 원본만 저장
-  //   → 수정: 체크 없이 captureStream() 결과를 그대로 사용
+  // [Work35-RecFix] ★5/18 검증된 방식 복원★: comp.captureStream(30)
+  // drawComp()가 33ms 간격으로 vid+skeleton을 compCtx에 그려줌 → comp.captureStream이 그 영상을 캡처
+  // cvs.captureStream(Work33/34) 방식은 10회 이상 시도에도 스켈레톤 오버레이 미포함 → 폐기
+  // getVideoTracks().length===0 체크 없음 (PATTERN-2 FIX 유지)
   let compStream;
   _iosDirectStream=false; // 매 녹화 시작 시 초기화
   try{
-    compStream=cvs.captureStream?cvs.captureStream(30):(cvs.mozCaptureStream?cvs.mozCaptureStream(30):null);
-    if(!compStream) throw new Error('cvs.captureStream unsupported');
-    // ★ PATTERN-2: getVideoTracks().length===0 체크 제거 — 비동기 트랙 추가 브라우저 대응
-    console.log('[Work34] cvs.captureStream OK');
+    compStream=comp.captureStream?comp.captureStream(30):(comp.mozCaptureStream?comp.mozCaptureStream(30):null);
+    if(!compStream) throw new Error('comp.captureStream unsupported');
+    console.log('[Work35] comp.captureStream OK, tracks:',compStream.getVideoTracks().length);
   }catch(e){
-    console.warn('[Work34] cvs.captureStream failed, fallback:',e.message);
+    console.warn('[Work35] comp.captureStream failed, fallback:',e.message);
     if(_srcMode==='camera'&&S.stream){
       compStream=S.stream;
       _iosDirectStream=true; // onstop에서 트랙 정지 스킵 (live stream 보호)
@@ -3563,6 +3556,7 @@ async function startLive(){
   _gateEntryPosLive=null; // [Work30-RepFix] 세션 시작 시 실시간 진입 위치 초기화
   if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
   _repPosSnapshots=[];_bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity; // [BUG5-FIX]
+  _posCmpBuf=[]; // [Work35-CmpSmooth] 매 분析 시작 시 cmp 버퍼 초기화
   resetRepOsc();
   // ── detection 상태 완전 초기화: _detPending이 이전 세션에서 stuck true로 남는 버그 방지
   _detPending=false; _lastDet=0;
@@ -4086,6 +4080,7 @@ let _posRef = {};
 let _posHistory = [];
 let _lastPos = null;
 let _lastPosCmp = null;
+let _posCmpBuf = []; // [Work35-CmpSmooth] 최근 cmp 슬라이딩 윈도우 버퍼 (피드백 안정화용)
 const TRAJ_MS = 8000;
 // 정면/후면 지표 임계값: degree 단위(shoulderTilt/hipTilt/trunkLean), % 단위(hipShift/knee)
 const POS_THR = {shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:15, lKneeOff:12, rKneeOff:12}; // [Issue5 FIX] 3→5° (허용 오차 확대)
@@ -4441,6 +4436,31 @@ function pushPosHistory(pos){
   _posHistory = _posHistory.filter(p => now-p.t < TRAJ_MS+300);
 }
 
+// [Work35-CmpSmooth] 최근 1500ms cmp 평균값 반환 → 단일 프레임 노이즈 제거, 피드백 방향 안정화
+// 문제: _lastPosCmp(단일 프레임)은 TF.js GPU 타이밍에 따라 다른 비디오 프레임을 보게 됨
+//   → 같은 영상+같은 기준자세로도 매 분析마다 다른 방향 피드백("골반 왼쪽" vs "골반 오른쪽") 발화
+// 해결: 최근 1.5초간 누적된 cmp들의 평균 dev + 다수결 st를 사용 → 안정적 방향 판단
+function avgPosCmp(){
+  if(!_posCmpBuf.length) return _lastPosCmp;
+  const now=Date.now();
+  const recent=_posCmpBuf.filter(b=>now-b.t<1500);
+  if(recent.length<2) return _lastPosCmp; // 샘플 부족 시 단일 프레임 폴백
+  const keys=['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff'];
+  const result={};
+  for(const k of keys){
+    const vals=recent.map(b=>b.cmp[k]).filter(v=>v&&v.dev!=null);
+    if(!vals.length){result[k]={cur:null,dev:null,st:'unk'};continue;}
+    const avgDev=vals.reduce((s,v)=>s+v.dev,0)/vals.length;
+    const avgCur=vals.reduce((s,v)=>s+(v.cur||0),0)/vals.length;
+    // 다수결 상태 판정
+    const counts={good:0,warn:0,crit:0};
+    vals.forEach(v=>{if(v.st&&v.st in counts)counts[v.st]++;});
+    const st=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+    result[k]={cur:avgCur,dev:avgDev,st};
+  }
+  return result;
+}
+
 function drawTrajGraph(){
   const cvs = $('traj-cvs');
   if(!cvs||!cvs.offsetWidth) return;
@@ -4771,6 +4791,39 @@ async function init(){
       }
     },3000);
     $('cam-wrap').addEventListener('touchstart',fixIOSAudioRouting,{once:true});
+  }catch(e){
+    console.error('Camera:',e);
+    $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';
+  }
+
+  $('mdl-txt').textContent=TX[CL].mdl_loading||'로딩 중';
+  try{
+    S.det=await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+            {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
+    );
+    if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
+    S.ready=true;
+    $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
+    $('btn-main').disabled=false;
+    $('init').classList.add('gone');
+    setTimeout(checkCameraHealth,400);
+  }catch(e){
+    console.error('Model:',e);
+    $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
+    $('init').classList.add('gone');
+    const rb=document.createElement('div');
+    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
+    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
+    document.body.appendChild(rb);
+  }
+  speechSynthesis.getVoices();
+}
+
+window.addEventListener('load',init);
+</script>
+</body>
+</html>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            chstart',fixIOSAudioRouting,{once:true});
   }catch(e){
     console.error('Camera:',e);
     $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';

@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v33</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v34</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1958,8 +1958,13 @@ async function saveRefFrame(){
     if(fpv){
       const pKps=_fpPoses?_fpPoses.keypoints:null;
       if(pKps){const pRef=extractPositions(pKps);if(pRef){
-        // [Work17] 분석과 동일한 방향 고정 로직
-        const _pNormRef=(S.facingMode==='user'?1:(S.dir==='back'?1:-1));
+        // [Work34-DirFix] ★버그수정★: _pNormRef를 _pNorm과 동일한 공식으로 통일
+        // 이전: S.facingMode==='user'?1:... → _srcMode 체크 없이 facingMode만 봄
+        //   파일 모드에서 이전 selfie 세션 S.facingMode='user'가 잔류하면 _pNormRef=1(미반전)
+        //   → 분析 _pNorm=-1(반전)과 불일치 → 기준자세 hipShift 부호 반대 → 첫 분析 방향 반전
+        // 수정: _srcMode==='camera' 조건 추가 → 분析 _pNorm과 완전 동일한 로직
+        const _isUserRef=(_srcMode==='camera'&&S.facingMode==='user');
+        const _pNormRef=(_isUserRef?1:(S.dir==='back'?1:-1));
         if(_pNormRef<0){
           if(pRef.hipShift!=null) pRef.hipShift=-pRef.hipShift;
         }
@@ -2818,19 +2823,21 @@ async function startRecording(){
   try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
   S.drawCompInterval=setInterval(drawComp,33);
 
-  // [Work33-RecFix] cvs.captureStream(): DOM 상시 가시적 canvas → iOS 포함 전 기기 신뢰성 보장
+  // [Work34-RecFix] cvs.captureStream(): DOM 상시 가시적 canvas → iOS 포함 전 기기 신뢰성 보장
   // drawFrame()이 _compDrawing=true 시 vid+스켈레톤을 cvs에 합성 그림 → captureStream이 완전한 영상 캡처
+  // [PATTERN-2 FIX] getVideoTracks().length===0 체크 완전 제거:
+  //   → 일부 브라우저에서 트랙이 비동기로 추가되므로 즉시 체크하면 항상 0으로 보임
+  //   → 0 체크 시 throw → catch의 fallback(new MediaStream() 빈 스트림) 실행 → 빈 chunks → 원본만 저장
+  //   → 수정: 체크 없이 captureStream() 결과를 그대로 사용
   let compStream;
   _iosDirectStream=false; // 매 녹화 시작 시 초기화
   try{
     compStream=cvs.captureStream?cvs.captureStream(30):(cvs.mozCaptureStream?cvs.mozCaptureStream(30):null);
     if(!compStream) throw new Error('cvs.captureStream unsupported');
-    if(compStream.getVideoTracks().length===0){
-      throw new Error('cvs.captureStream: no video tracks');
-    }
-    console.log('[Work33] cvs.captureStream OK, video tracks:',compStream.getVideoTracks().length);
+    // ★ PATTERN-2: getVideoTracks().length===0 체크 제거 — 비동기 트랙 추가 브라우저 대응
+    console.log('[Work34] cvs.captureStream OK');
   }catch(e){
-    console.warn('[Work33] cvs.captureStream failed, fallback:',e.message);
+    console.warn('[Work34] cvs.captureStream failed, fallback:',e.message);
     if(_srcMode==='camera'&&S.stream){
       compStream=S.stream;
       _iosDirectStream=true; // onstop에서 트랙 정지 스킵 (live stream 보호)
@@ -3565,6 +3572,11 @@ async function startLive(){
   S.live=true;S.lastFB=0;S.lastPr=0;S.goodN=0;S.speak=false;
   $('btn-main').className='stop';$('btn-main').textContent=TX[CL].btn_stop;
   $('btn-main').disabled=false;
+  // [Work34-DirFix] ★버그수정★: S.dir 동기화를 if(isFrontal()) 블록 밖으로 이동
+  // 이전: if(isFrontal()){...S.dir 동기화...} → isFrontal() 체크 시점에 S.dir이 이미 틀려있으면 동기화 안됨
+  // 수정: 매 분析 시작 시 항상 먼저 동기화 → _pNorm 계산이 첫 프레임부터 올바른 S.dir 사용
+  // 이것이 "첫 번째 분析만 방향 반전" 버그의 원인: 앱 첫 실행 시 S.dir 초기값(='left')이 버튼 상태와 불일치 가능
+  {const _ab=document.querySelector('.dirbtn.on');if(_ab)S.dir=_ab.dataset.d;}
   if(isFrontal()){
     _posHistory=[];
     $('pos-bar').classList.add('on');
@@ -3572,9 +3584,7 @@ async function startLive(){
     const tw=$('traj-wrap'); if(tw) tw.classList.add('on');
     const tc=$('traj-cvs');
     if(tc&&tc.offsetWidth) tc.width=tc.offsetWidth;
-    // [Work22-DirFix] 분析 시작 시 UI 버튼과 S.dir 동기화 + 슬라이더 라벨 즉시 초기화
-    // S.dir이 JS 상태와 버튼 UI 상태가 어긋날 수 있어 매 분析 시작 시 동기화
-    {const _ab=document.querySelector('.dirbtn.on');if(_ab)S.dir=_ab.dataset.d;}
+    // [Work22-DirFix] 슬라이더 라벨 즉시 초기화 (S.dir 동기화는 위에서 수행)
     {const _ll=$('pt-lbl-l'),_lr=$('pt-lbl-r');if(_ll&&_lr){_ll.textContent=S.dir==='front'?'우':'좌';_lr.textContent=S.dir==='front'?'좌':'우';}}
     // [Work17] frontFlip 버튼 제거됨
     // [Work26-GateFix] Work25-RepFix 롤백: gate는 idle에서 시작
@@ -4747,50 +4757,4 @@ async function init(){
         if(_srcMode==='camera'&&!S.live&&!S.caps){
           setTimeout(restartCamera,800);
           setTimeout(()=>{if(!S.live&&!S.caps&&(vid.paused||vid.readyState<2))restartCamera();},2000);
-               } else if(_srcMode==='file'&&!S.live) setTimeout(()=>{if(vid.readyState<2)restartCamera();},300);
-      }
-    });
-    window.addEventListener('pageshow',e=>{
-      if(e.persisted&&_srcMode==='camera'&&!S.live&&!S.caps) setTimeout(restartCamera,500);
-    });
-    vid.addEventListener('emptied',()=>{if(!S.live&&!S.caps&&_srcMode==='camera')checkCameraHealth();});
-    vid.addEventListener('ended',()=>{if(_srcMode==='camera')checkCameraHealth();});
-    setInterval(()=>{
-      if(!S.live&&!S.caps&&document.visibilityState==='visible'&&_srcMode==='camera'){
-        if(vid.paused||vid.readyState<2)checkCameraHealth();
-      }
-    },3000);
-    $('cam-wrap').addEventListener('touchstart',fixIOSAudioRouting,{once:true});
-  }catch(e){
-    console.error('Camera:',e);
-    $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';
-  }
-
-  $('mdl-txt').textContent=TX[CL].mdl_loading||'로딩 중';
-  try{
-    S.det=await poseDetection.createDetector(
-      poseDetection.SupportedModels.MoveNet,
-            {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
-    );
-    if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
-    S.ready=true;
-    $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
-    $('btn-main').disabled=false;
-    $('init').classList.add('gone');
-    setTimeout(checkCameraHealth,400);
-  }catch(e){
-    console.error('Model:',e);
-    $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
-    $('init').classList.add('gone');
-    const rb=document.createElement('div');
-    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
-    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
-    document.body.appendChild(rb);
-  }
-  speechSynthesis.getVoices();
-}
-
-window.addEventListener('load',init);
-</script>
-</body>
-</html>
+               } else if(_srcMode==='file'&&

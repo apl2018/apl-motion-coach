@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v31</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v32</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -2682,15 +2682,14 @@ async function startRecording(){
   comp.width=cw; comp.height=ch;
   const compCtx=comp.getContext('2d');
   S.compCanvas=comp;
-  // [Work29-RecFix] iOS file mode: transform:scale(0.001)로 사실상 비가시, 그러나 iOS가 렌더링 수행
-  // 문제 이력:
-  //   Work27: position:fixed;2px;z-index:-1 → iOS 렌더링 스킵 → captureStream 빈 청크
-  //   Work28: cam-wrap 내부 100%;opacity:0.01 → 여전히 iOS 렌더링 스킵 (opacity<역치)
-  // 핵심 이해: iOS Safari는 opacity 낮은 요소, z-index 음수, off-DOM 요소를 렌더링 스킵 최적화
-  //           captureStream은 캔버스 픽셀 버퍼를 캡처 → iOS가 실제로 canvas를 그려야만 데이터 생성
-  // 해결: transform:scale(0.001) — CSS transform은 렌더링 후 표시 단계에 적용
-  //       → canvas 픽셀 버퍼는 정상 사이즈로 렌더링됨, 화면에는 ~1px로 표시 (사용자 비인지)
-  //       → opacity:1.0 유지 → iOS 렌더링 최적화 스킵 안 함
+  // [Work32-RecFix] ★핵심 버그 수정★: _moduleIOSCam을 if(_moduleIOSCam) 체크 이전에 설정
+  // 기존 버그: _moduleIOSCam이 line ~2802에서 할당되었지만, 아래 if(_moduleIOSCam) 체크는 그 이전에 실행
+  // → 첫 번째 분析에서 _moduleIOSCam=false(초기값)로 평가 → comp canvas가 DOM에 추가 안됨
+  // → comp.captureStream()이 off-DOM canvas에 호출 → iOS가 빈 VideoTrack 반환
+  // → ondataavailable 빈 chunks → saveRecording([]) → 원본 파일 fallback (스켈레톤 없음)
+  // → 두 번째 분析부터만 동작 (이전 세션의 _moduleIOSCam=true 값 사용되므로)
+  // 수정: 반드시 캔버스 DOM 배치 결정 이전에 _moduleIOSCam을 설정
+  _moduleIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent);
   if(_moduleIOSCam){
     // [Work31-RecFix] iOS 전 모드(카메라+파일): comp canvas를 cam-wrap 내부에 완전 가시적으로 배치
     // 근거: iOS Safari는 숨겨진/변환된 canvas(z-index<0, opacity<역치, transform:scale~0)를 렌더링 스킵
@@ -2798,22 +2797,19 @@ async function startRecording(){
 
   // captureStream: iOS는 30fps, 기타는 30fps
   let compStream;
-  const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
-  _moduleIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent); // [Work19-RecFix] 파일모드 포함 전 iOS: onstop 100ms 지연 → late ondataavailable 대응
+  const _isIOSCam=_moduleIOSCam&&_srcMode==='camera'; // [Work32] _moduleIOSCam 이미 위에서 설정됨
+  // [Work32-RecFix] _moduleIOSCam 중복 할당 제거 (이미 위에서 설정됨)
   _iosDirectStream=false; // [FIX-iOS-REC v3] 매 녹화 시작 시 초기화
-  // [Work31-RecFix] iOS 포함 전 기기: comp.captureStream() 사용 → 스켈레톤 오버레이 포함
-  // 기존: iOS 카메라 모드에서 S.stream 직접 사용(오버레이 없음)
-  // 변경: comp canvas가 cam-wrap 내부에 가시적으로 배치됨(위 코드) → iOS가 반드시 렌더링
-  //   → captureStream이 스켈레톤+수치 포함된 composite 영상 캡처
+  // [Work32-RecFix] comp.captureStream() — iOS 포함 전 기기. comp canvas가 DOM에 가시적으로 배치됨 → iOS가 반드시 렌더링
   try{
     compStream=comp.captureStream?comp.captureStream(30):(comp.mozCaptureStream?comp.mozCaptureStream(30):null);
     if(!compStream) throw new Error('captureStream unsupported');
-    // captureStream 성공해도 iOS에서 video track이 없으면 S.stream 폴백
-    if(_isIOSCam&&compStream.getVideoTracks().length===0){
-      throw new Error('iOS captureStream: no video tracks');
+    // [Work32-RecFix] iOS(카메라+파일 모두): video track 없으면 폴백
+    if(_moduleIOSCam&&compStream.getVideoTracks().length===0){
+      throw new Error('iOS captureStream: no video tracks (DOM 배치 후에도 실패)');
     }
   }catch(e){
-    console.warn('[Work31] captureStream failed, fallback to direct stream:',e.message);
+    console.warn('[Work32] captureStream failed, fallback:',e.message);
     if(_srcMode==='camera'&&S.stream){
       compStream=S.stream;
       _iosDirectStream=true; // onstop에서 트랙 정지 스킵 (live stream 보호)
@@ -2822,9 +2818,8 @@ async function startRecording(){
     }
   }
   S.compStream=compStream; // [BUG1] 정지 시 video track stop을 위해 저장
-  // [Work23-RecFix] iOS 파일모드: captureStream 실패 시 빈 스트림 감지 → 즉시 안내
-  if(_moduleIOSCam&&_srcMode==='file'&&compStream.getVideoTracks().length===0){
-    console.warn('[Work23] iOS file mode: captureStream produced no video tracks');
+  if(_moduleIOSCam){
+    console.log('[Work32] captureStream video tracks:',compStream.getVideoTracks().length,'iosDirectStream:',_iosDirectStream);
   }
 
   // Audio: AudioContext + 마이크

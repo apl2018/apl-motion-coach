@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v30</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v31</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -2691,12 +2691,16 @@ async function startRecording(){
   // 해결: transform:scale(0.001) — CSS transform은 렌더링 후 표시 단계에 적용
   //       → canvas 픽셀 버퍼는 정상 사이즈로 렌더링됨, 화면에는 ~1px로 표시 (사용자 비인지)
   //       → opacity:1.0 유지 → iOS 렌더링 최적화 스킵 안 함
-  if(_moduleIOSCam&&_srcMode==='file'){
-    // [Work30-RecFix] z-index:-1 → z-index:9999
-    // iOS Safari는 z-index 음수 요소를 렌더링 스킵 최적화 적용 → captureStream 빈 화면
-    // transform:scale(0.001)으로 화면에는 ~1px만 표시되며, z-index:9999로 iOS 렌더링 보장
-    comp.style.cssText=`position:fixed;left:0;top:0;width:${cw}px;height:${ch}px;transform:scale(0.001);transform-origin:0 0;pointer-events:none;opacity:1;z-index:9999;`;
-    document.body.appendChild(comp);
+  if(_moduleIOSCam){
+    // [Work31-RecFix] iOS 전 모드(카메라+파일): comp canvas를 cam-wrap 내부에 완전 가시적으로 배치
+    // 근거: iOS Safari는 숨겨진/변환된 canvas(z-index<0, opacity<역치, transform:scale~0)를 렌더링 스킵
+    //   → captureStream 픽셀 버퍼가 비어있음 → 저장 영상 검은 화면
+    // 해결: position:absolute + z-index:10 + opacity:1 → iOS가 반드시 전체 해상도로 렌더링
+    //   → captureStream이 스켈레톤+수치 오버레이 포함된 완전한 영상을 캡처
+    // 사용자 화면: 분析 중 comp canvas(스켈레톤 오버레이 포함)가 실시간으로 보임 (의도된 동작)
+    const _cw2=$('cam-wrap');
+    comp.style.cssText=`position:absolute;left:0;top:0;width:100%;height:100%;z-index:10;pointer-events:none;opacity:1;`;
+    _cw2.appendChild(comp);
   }
 
   function drawComp(){
@@ -2797,24 +2801,24 @@ async function startRecording(){
   const _isIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent)&&_srcMode==='camera';
   _moduleIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent); // [Work19-RecFix] 파일모드 포함 전 iOS: onstop 100ms 지연 → late ondataavailable 대응
   _iosDirectStream=false; // [FIX-iOS-REC v3] 매 녹화 시작 시 초기화
-  // [FIX-iOS-REC v3] iOS Safari: 클론 트랙은 빈 chunks 반환 → 원본 트랙 직접 사용
-  // cloned tracks produce zero-size chunks on iOS; direct track reference works correctly
-  if(_isIOSCam&&S.stream&&S.stream.getVideoTracks().length){
-    // [FIX-iOS-REC v4] new MediaStream() 래퍼 제거 → S.stream 자체 직접 사용
-    // new MediaStream(tracks)는 일부 iOS에서 ondataavailable 미발화 → 직접 참조
-    compStream=S.stream;
-    _iosDirectStream=true; // onstop에서 트랙 정지 스킵 (live stream 보호)
-  }else{
-    try{
-      compStream=comp.captureStream?comp.captureStream(30):(comp.mozCaptureStream?comp.mozCaptureStream(30):null);
-      if(!compStream) throw new Error('captureStream unsupported');
-    }catch(e){
-      console.warn('captureStream failed:',e);
-      if(_srcMode==='camera'&&S.stream){
-        compStream=new MediaStream(S.stream.getVideoTracks().map(t=>t.clone()));
-      }else{
-        compStream=new MediaStream();
-      }
+  // [Work31-RecFix] iOS 포함 전 기기: comp.captureStream() 사용 → 스켈레톤 오버레이 포함
+  // 기존: iOS 카메라 모드에서 S.stream 직접 사용(오버레이 없음)
+  // 변경: comp canvas가 cam-wrap 내부에 가시적으로 배치됨(위 코드) → iOS가 반드시 렌더링
+  //   → captureStream이 스켈레톤+수치 포함된 composite 영상 캡처
+  try{
+    compStream=comp.captureStream?comp.captureStream(30):(comp.mozCaptureStream?comp.mozCaptureStream(30):null);
+    if(!compStream) throw new Error('captureStream unsupported');
+    // captureStream 성공해도 iOS에서 video track이 없으면 S.stream 폴백
+    if(_isIOSCam&&compStream.getVideoTracks().length===0){
+      throw new Error('iOS captureStream: no video tracks');
+    }
+  }catch(e){
+    console.warn('[Work31] captureStream failed, fallback to direct stream:',e.message);
+    if(_srcMode==='camera'&&S.stream){
+      compStream=S.stream;
+      _iosDirectStream=true; // onstop에서 트랙 정지 스킵 (live stream 보호)
+    }else{
+      compStream=new MediaStream();
     }
   }
   S.compStream=compStream; // [BUG1] 정지 시 video track stop을 위해 저장
@@ -3470,7 +3474,9 @@ async function startLive(){
   }catch(e){_recAudioCtx=null;_recAudioDest=null;}
 
   // ② TTS 사전 활성화 — 제스처 컨텍스트 내(await 전)에서 호출해야 iOS에서 동작
-  try{const _w=new SpeechSynthesisUtterance('');speechSynthesis.speak(_w);speechSynthesis.cancel();}catch(e){}
+  // [Work31-SpeechFix] iOS: 빈 문자열('') + 즉시 cancel → synthesis 엔진 broken 상태 유발 → 첫 분석 음성 무음
+  // 수정: 공백(' ') + volume=0 + rate=10(극초고속) 무음 발화, 즉시 cancel 없음 → iOS synthesis 정상 unlock
+  try{const _w=new SpeechSynthesisUtterance(' ');_w.volume=0;_w.rate=10;speechSynthesis.speak(_w);}catch(e){}
 
   // ③ 마이크 요청 — TTS 사전활성화 후 요청해야 iOS에서 라우팅 간섭 없음
   //    echoCancellation:false → 스피커로 나오는 TTS 피드백 음성을 마이크가 억제하지 않고 캡처
@@ -3644,16 +3650,15 @@ function stopLive(){
   $('fb-txt').textContent='';
   ctx.clearRect(0,0,cvs.width,cvs.height);
   stopRecording();
-  // File mode: restore camera after recording saves
-  // restartCamera() guarantees fresh stream (S.stream may be stale after file analysis)
+  // [Work31-SaveFix] File mode: 비디오 요소만 정리, restartCamera() 호출 금지
+  // restartCamera()는 getUserMedia를 호출 → iOS 카메라 권한 다이얼로그 재표시 유발
+  // 카메라 재시작은 요약창 닫기(btn-sum-close) or 저장 완료 후(_clearSave)에서 처리
   if(_srcMode==='file'){
     setTimeout(()=>{
       vid.pause();
       vid.src='';
       vid.srcObject=null;
-      // transform은 restartCamera/switchCamera가 처리
-      restartCamera();
-    },1000);
+    },300);
   }
   const elapsed=Math.floor((Date.now()-S.startTime)/1000);
   speak(TX[CL].voice_stop);
@@ -4329,14 +4334,18 @@ function updatePosBar(pos, cmp){
   }
 
   // ③ 무릎 정렬
+  // [Work31-KneeBarFix] unk 상태(#555 어두운 회색)는 어두운 배경에서 안 보임 → #fff(흰색)로 변환
+  // 어깨/골반/몸통은 setDeg()에서 col==='#555'?'#fff':col 보정이 있었으나 무릎은 누락됐음
   const lkEl=$('pv-lk'), rkEl=$('pv-rk');
   if(lkEl){
     lkEl.textContent=(pos&&pos.lKneeOff!=null)?(pos.lKneeOff>0?'+':'')+pos.lKneeOff:'--';
-    lkEl.style.color=cmp&&cmp.lKneeOff?(ST_COL_POS[cmp.lKneeOff.st]||'#fff'):'#fff';
+    const _lkC=(cmp&&cmp.lKneeOff)?(ST_COL_POS[cmp.lKneeOff.st]||'#fff'):'#fff';
+    lkEl.style.color=_lkC==='#555'?'#fff':_lkC;
   }
   if(rkEl){
     rkEl.textContent=(pos&&pos.rKneeOff!=null)?(pos.rKneeOff>0?'+':'')+pos.rKneeOff:'--';
-    rkEl.style.color=cmp&&cmp.rKneeOff?(ST_COL_POS[cmp.rKneeOff.st]||'#fff'):'#fff';
+    const _rkC=(cmp&&cmp.rKneeOff)?(ST_COL_POS[cmp.rKneeOff.st]||'#fff'):'#fff';
+    rkEl.style.color=_rkC==='#555'?'#fff':_rkC;
   }
   // ④ 센서 상태 표시
   const sensorLbl=$('pm-sensor-lbl');
@@ -4659,9 +4668,9 @@ async function init(){
     $('summary').classList.remove('on');
     const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';
     _pendingSaveBlob=null;_pendingSaveName='';
+    // [Work31-SaveFix] 닫기 버튼 → 카메라 재시작 (저장 안 했어도 홈으로)
     setTimeout(()=>{
-      if(_srcMode==='camera'){_forceCameraRestart();}
-      else if(vid.readyState<2||vid.videoWidth===0) restartCamera();
+      restartCamera();
     },400);
   });
   $('btn-sum-save').addEventListener('click',()=>{
@@ -4673,16 +4682,21 @@ async function init(){
     const blob=_pendingSaveBlob, fname=_pendingSaveName;
     const file=new File([blob],fname,{type:blob.type,lastModified:Date.now()});
     const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+    // [Work31-SaveFix] 저장 완료 후: 요약창 닫고 홈으로 → 카메라 재시작
     const _clearSave=()=>{
       _pendingSaveBlob=null;_pendingSaveName='';
       const _sb=$('btn-sum-save');if(_sb)_sb.style.display='none';
+      // 요약창 자동 닫기 → 앱 초기 화면으로
+      $('summary').classList.remove('on');
+      setTimeout(()=>{ restartCamera(); },400);
     };
     if(isIOS){
       if(navigator.share){
+        // [Work31-SaveFix] 중복 navigator.share() 호출 버그 수정: if/else 블록 안에서만 호출
         navigator.share({files:[file],title:'APL Motion Coach',text:fname})
           .then(_clearSave)
           .catch(err=>{
-            if(err.name==='AbortError') return;
+            if(err.name==='AbortError') return; // 사용자가 공유 취소 → 그대로 유지
             const u=URL.createObjectURL(blob);window.open(u,'_blank');
             setTimeout(()=>URL.revokeObjectURL(u),60000);
             alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
@@ -4694,9 +4708,6 @@ async function init(){
         alert('영상을 길게 눌러 "비디오 저장"을 선택하면 사진 앱에 저장됩니다.');
         _clearSave();
       }
-      navigator.share({files:[file],title:'APL Motion Coach',text:fname})
-        .then(_clearSave)
-        .catch(err=>{if(err.name!=='AbortError'){downloadVideo(blob,fname);_clearSave();}});
     } else {
       downloadVideo(blob,fname);_clearSave();
     }

@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v32</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v33</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1177,6 +1177,16 @@ function kpColor(idx,cmp){
 }
 function drawFrame(kps,cmp){
   ctx.clearRect(0,0,cvs.width,cvs.height);
+  // [Work33-RecFix] 녹화 중: cvs에 vid 프레임을 먼저 그림
+  // cvs는 DOM에 항상 가시적으로 존재 → cvs.captureStream()이 iOS 포함 전 기기에서 신뢰성 있게 동작
+  // 스켈레톤은 vid 위에 오버레이로 그려짐 (coverXY와 동일한 contain 스케일링)
+  if(_compDrawing){
+    try{
+      const _vw=vid.videoWidth||1,_vh=vid.videoHeight||1;
+      const _sc=Math.min(cvs.width/_vw,cvs.height/_vh);
+      ctx.drawImage(vid,(cvs.width-_vw*_sc)/2,(cvs.height-_vh*_sc)/2,_vw*_sc,_vh*_sc);
+    }catch(e){}
+  }
   const _frontal=isFrontal();
   for(const[i,j]of SKEL){
     // 정면/후면: 어깨↔골반 측면선 제거 (몸통기울기 선으로 대체)
@@ -1281,6 +1291,27 @@ function drawFrame(kps,cmp){
         ctx.fillStyle=col;ctx.fillText(t,p.x+dx,p.y+dy);
       }
     }
+  }
+  // [Work33-RecFix] 녹화 중: 코칭 자막 오버레이를 cvs에 그림 (cvs.captureStream()으로 캡처됨)
+  if(_compDrawing&&_coachOverlay&&Date.now()<_coachOverlay.until){
+    try{
+      const txt=_coachOverlay.text;
+      const fh=Math.max(14,Math.round(cvs.height*0.034));
+      const pad=Math.round(cvs.height*0.013);
+      const maxW=cvs.width-32;
+      ctx.font=`600 ${fh}px -apple-system,sans-serif`;
+      const half=Math.ceil(txt.length/2);
+      const lines=ctx.measureText(txt).width>maxW?[txt.slice(0,half),txt.slice(half)]:[txt];
+      const barH=fh*lines.length+pad*(lines.length+1);
+      const barY=cvs.height-barH-Math.round(cvs.height*0.018);
+      ctx.save();
+      ctx.fillStyle='rgba(0,0,0,0.72)';ctx.fillRect(0,barY,cvs.width,barH);
+      ctx.fillStyle='#E53935';ctx.fillRect(0,barY,5,barH);
+      ctx.font=`600 ${fh}px -apple-system,sans-serif`;
+      ctx.fillStyle='#FFFFFF';ctx.textAlign='center';ctx.textBaseline='middle';
+      lines.forEach((line,i)=>{ctx.fillText(line,cvs.width/2,barY+pad*(i+1)+fh*(i+0.5));});
+      ctx.restore();
+    }catch(e){}
   }
 }
 function updateAnglesBar(cmp,rawAngles){
@@ -2682,25 +2713,17 @@ async function startRecording(){
   comp.width=cw; comp.height=ch;
   const compCtx=comp.getContext('2d');
   S.compCanvas=comp;
-  // [Work32-RecFix] ★핵심 버그 수정★: _moduleIOSCam을 if(_moduleIOSCam) 체크 이전에 설정
-  // 기존 버그: _moduleIOSCam이 line ~2802에서 할당되었지만, 아래 if(_moduleIOSCam) 체크는 그 이전에 실행
-  // → 첫 번째 분析에서 _moduleIOSCam=false(초기값)로 평가 → comp canvas가 DOM에 추가 안됨
-  // → comp.captureStream()이 off-DOM canvas에 호출 → iOS가 빈 VideoTrack 반환
-  // → ondataavailable 빈 chunks → saveRecording([]) → 원본 파일 fallback (스켈레톤 없음)
-  // → 두 번째 분析부터만 동작 (이전 세션의 _moduleIOSCam=true 값 사용되므로)
-  // 수정: 반드시 캔버스 DOM 배치 결정 이전에 _moduleIOSCam을 설정
+  // [Work33-RecFix] ★녹화 전략 전환★: comp.captureStream() → cvs.captureStream()
+  // 근거: comp(별도 생성 canvas)는 iOS Safari에서 DOM 배치 후에도 captureStream 비디오 트랙 0개 반환
+  //   Work31/32의 DOM 배치 시도(comp→cam-wrap appendChild)는 근본 해결 안됨
+  //   근본 원인: iOS는 이미 렌더링 중인 canvas만 captureStream 신뢰성 보장
+  // 해결: cvs = 처음부터 DOM에 존재, loop()의 requestAnimationFrame으로 매 프레임 실제 렌더링 중
+  //   → cvs.captureStream()은 iOS를 포함한 전 기기에서 신뢰성 있는 비디오 트랙 반환
+  //   → drawFrame() 내 _compDrawing=true 시 vid 프레임+스켈레톤 합성하여 cvs에 그림
+  // comp canvas는 drawComp()의 frozen-frame 감지 등 보조 로직을 위해 유지 (captureStream 미사용)
   _moduleIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-  if(_moduleIOSCam){
-    // [Work31-RecFix] iOS 전 모드(카메라+파일): comp canvas를 cam-wrap 내부에 완전 가시적으로 배치
-    // 근거: iOS Safari는 숨겨진/변환된 canvas(z-index<0, opacity<역치, transform:scale~0)를 렌더링 스킵
-    //   → captureStream 픽셀 버퍼가 비어있음 → 저장 영상 검은 화면
-    // 해결: position:absolute + z-index:10 + opacity:1 → iOS가 반드시 전체 해상도로 렌더링
-    //   → captureStream이 스켈레톤+수치 오버레이 포함된 완전한 영상을 캡처
-    // 사용자 화면: 분析 중 comp canvas(스켈레톤 오버레이 포함)가 실시간으로 보임 (의도된 동작)
-    const _cw2=$('cam-wrap');
-    comp.style.cssText=`position:absolute;left:0;top:0;width:100%;height:100%;z-index:10;pointer-events:none;opacity:1;`;
-    _cw2.appendChild(comp);
-  }
+  // [Work33-RecFix] iOS comp DOM 배치 불필요: cvs.captureStream() 사용으로 대체
+  // (comp를 DOM에 추가하는 이전 Work31-RecFix 코드 제거)
 
   function drawComp(){
     if(!_compDrawing) return;
@@ -2795,21 +2818,19 @@ async function startRecording(){
   try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
   S.drawCompInterval=setInterval(drawComp,33);
 
-  // captureStream: iOS는 30fps, 기타는 30fps
+  // [Work33-RecFix] cvs.captureStream(): DOM 상시 가시적 canvas → iOS 포함 전 기기 신뢰성 보장
+  // drawFrame()이 _compDrawing=true 시 vid+스켈레톤을 cvs에 합성 그림 → captureStream이 완전한 영상 캡처
   let compStream;
-  const _isIOSCam=_moduleIOSCam&&_srcMode==='camera'; // [Work32] _moduleIOSCam 이미 위에서 설정됨
-  // [Work32-RecFix] _moduleIOSCam 중복 할당 제거 (이미 위에서 설정됨)
-  _iosDirectStream=false; // [FIX-iOS-REC v3] 매 녹화 시작 시 초기화
-  // [Work32-RecFix] comp.captureStream() — iOS 포함 전 기기. comp canvas가 DOM에 가시적으로 배치됨 → iOS가 반드시 렌더링
+  _iosDirectStream=false; // 매 녹화 시작 시 초기화
   try{
-    compStream=comp.captureStream?comp.captureStream(30):(comp.mozCaptureStream?comp.mozCaptureStream(30):null);
-    if(!compStream) throw new Error('captureStream unsupported');
-    // [Work32-RecFix] iOS(카메라+파일 모두): video track 없으면 폴백
-    if(_moduleIOSCam&&compStream.getVideoTracks().length===0){
-      throw new Error('iOS captureStream: no video tracks (DOM 배치 후에도 실패)');
+    compStream=cvs.captureStream?cvs.captureStream(30):(cvs.mozCaptureStream?cvs.mozCaptureStream(30):null);
+    if(!compStream) throw new Error('cvs.captureStream unsupported');
+    if(compStream.getVideoTracks().length===0){
+      throw new Error('cvs.captureStream: no video tracks');
     }
+    console.log('[Work33] cvs.captureStream OK, video tracks:',compStream.getVideoTracks().length);
   }catch(e){
-    console.warn('[Work32] captureStream failed, fallback:',e.message);
+    console.warn('[Work33] cvs.captureStream failed, fallback:',e.message);
     if(_srcMode==='camera'&&S.stream){
       compStream=S.stream;
       _iosDirectStream=true; // onstop에서 트랙 정지 스킵 (live stream 보호)
@@ -2817,10 +2838,7 @@ async function startRecording(){
       compStream=new MediaStream();
     }
   }
-  S.compStream=compStream; // [BUG1] 정지 시 video track stop을 위해 저장
-  if(_moduleIOSCam){
-    console.log('[Work32] captureStream video tracks:',compStream.getVideoTracks().length,'iosDirectStream:',_iosDirectStream);
-  }
+  S.compStream=compStream; // 정지 시 video track stop을 위해 저장
 
   // Audio: AudioContext + 마이크
   // [FIX-iOS-REC v3] iOS 직접 트랙 모드에서는 오디오 추가 생략 (간섭 방지)
@@ -4297,6 +4315,13 @@ function updatePosBar(pos, cmp){
 
   // ② 골반 위치 (슬라이더)
   const thumb=$('pt-pos'), refLine=$('pr-pos'), valEl=$('pv-pos');
+  // [Work33-KneeFix] ★버그 수정★: _camFlip를 if(thumb){} 블록 밖으로 이동
+  // 기존 버그: const _camFlip가 if(thumb){} 블록 내부(block-scoped)에 선언되었으나
+  //   if(refLine){} 블록의 line 4318에서 ref.hipShift*_camFlip 평가 시 접근 시도
+  //   → 기준자세(ref)가 존재할 때마다 ReferenceError 발생
+  //   → try/catch에서 조용히 흡수 → knee 섹션(4334-4344)이 실행 안됨 → '--' 표시
+  // 수정: _camFlip을 함수 스코프(블록 밖)에 선언 → 두 if 블록 모두에서 접근 가능
+  const _camFlip=(isFrontal()&&S.dir==='front')?-1:1;
   if(thumb){
     // [FIX-HipSlider v3] body-space → camera-space 변환 + isFrontal 반전
     // pos.hipShift는 _pNorm 보정된 body-space (양수=신체우). 슬라이더는 camera-space 필요
@@ -4305,7 +4330,6 @@ function updatePosBar(pos, cmp){
     // 정면분析(isFrontal): 후면분析과 반대 방향으로 추가 반전 필요
     // [Work19-SliderFix] _lastPNorm 제거 → S.dir 직접 사용 (첫 프레임부터 즉시 올바른 방향)
     // front: 신체우=화면좌 → _camFlip=-1(슬라이더좌=신체우) / back: 신체우=화면우 → _camFlip=1
-    const _camFlip=(isFrontal()&&S.dir==='front')?-1:1;
     const hipShiftCam=pos?pos.hipShift*_camFlip:0;
     const v=hipShiftCam, range=80;
     thumb.style.left=Math.max(2,Math.min(98,((v+range)/(2*range))*100))+'%';

@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v35</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v36</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1487,9 +1487,10 @@ async function _runDetection(){
             }
           }
           if(_fInGate){
-            if(_gateState==='idle'){ _gateState='entry'; _gateInGateStartT=0; }
+            if(_gateState==='idle'){ _gateState='entry'; _gateInGateStartT=0; _gateExitStartT=0; }
             else if(_gateState==='timing'){
               // [Issue2 FIX] debounce: 200ms 이상 연속 감지돼야 시작자세 복귀로 인정 (노이즈 오감지 방지)
+              _gateExitStartT=0; // [Work36-RepFix] 게이트 안에 있으면 이탈 debounce 리셋
               if(_gateInGateStartT===0) _gateInGateStartT=now2;
               if(now2-_gateInGateStartT>=100){  // [Work23-RepFix] 정면: 100ms (기존 _GATE_CONFIRM_MS=200ms) 빠른 동작 허용
                 _gateInGateStartT=0;
@@ -1515,19 +1516,23 @@ async function _runDetection(){
           } else {
             _gateInGateStartT=0; // [Issue2 FIX] 게이트 이탈 시 debounce 리셋
             if(_gateState==='entry'){
-              _gateState='timing';_gateLastPrimeT=now2;_gateEndDetected=false;
-              // [Work30-RepFix] entry→timing 전환 시 현재 실제 위치 캡처 (localStorage stale 데이터 대신)
-              _gateEntryPosLive=_lastPos?{..._lastPos}:null;
-              // [Work22-RepFix] 정면분析: 항상 arm → 1렙 완료 직후 2렙도 카운팅
-              // 기존: _MIN_REP_MS(800ms) 체크로 1렙 직후 entry→timing 전환 시 _gateArmed=false
-              // → 연속 2렙에서 2번째 렙 미카운팅 버그. 위치기반+200ms debounce로 충분히 방지
-              _gateArmed=isFrontal()?true:(now2-_lastRepT>=_MIN_REP_MS);
-              // [Issue4 FIX] 정면 분석 이중발화 방지: 백업 타이머 제거
-              // 피드백은 시작자세 복귀 감지(위 timing→entry 전환)에서만 발화
-              // _GATE_PRIME_TIMEOUT(12s) 초과 시 idle 복귀는 아래 else-if에서 처리
-              if(_gateArmed){
-                clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null;
+              // [Work36-RepFix] entry→timing 이탈 디바운스 100ms
+              // TF.js cold-start 시 단일 노이즈 프레임이 즉시 timing 상태 전환 → ghost rep 방지
+              // 100ms 연속 이탈 확인 후에만 timing으로 전환 (첫 분析 +1회 과검출 수정)
+              if(!_gateExitStartT) _gateExitStartT=now2;
+              if(now2-_gateExitStartT>=100){
+                _gateExitStartT=0;
+                _gateState='timing';_gateLastPrimeT=now2;_gateEndDetected=false;
+                // [Work30-RepFix] entry→timing 전환 시 현재 실제 위치 캡처 (localStorage stale 데이터 대신)
+                _gateEntryPosLive=_lastPos?{..._lastPos}:null;
+                // [Work22-RepFix] 정면분析: 항상 arm → 1렙 완료 직후 2렙도 카운팅
+                _gateArmed=isFrontal()?true:(now2-_lastRepT>=_MIN_REP_MS);
+                // [Issue4 FIX] 정면 분析 이중발화 방지: 백업 타이머 제거
+                if(_gateArmed){
+                  clearTimeout(_pendingGateFBTimer); _pendingGateFBTimer=null;
+                }
               }
+              // else: 이탈 debounce 대기 중 — 아직 전환 안 함
             } else if(_gateState==='timing'){
               if(now2-_gateLastPrimeT>_GATE_PRIME_TIMEOUT){
                 clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;
@@ -2252,6 +2257,7 @@ let _gateEndVideoT = {};
 let _gateArmed = false;
 let _gateEndDetected = false;
 let _gateInGateStartT = 0; // [Issue2 FIX] timing→entry debounce: 시작자세 복귀 첫 감지 시각
+let _gateExitStartT = 0; // [Work36-RepFix] entry→timing debounce: 게이트 이탈 첫 감지 시각
 // [BUG5-FIX] per-rep 최적 프레임 스냅샷 (기준자세 타이밍 점수 정밀화)
 let _repPosSnapshots = [];
 let _bestTimingPos = null;
@@ -2723,8 +2729,8 @@ async function startRecording(){
   //   → drawFrame() 내 _compDrawing=true 시 vid 프레임+스켈레톤 합성하여 cvs에 그림
   // comp canvas는 drawComp()의 frozen-frame 감지 등 보조 로직을 위해 유지 (captureStream 미사용)
   _moduleIOSCam=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-  // [Work33-RecFix] iOS comp DOM 배치 불필요: cvs.captureStream() 사용으로 대체
-  // (comp를 DOM에 추가하는 이전 Work31-RecFix 코드 제거)
+  // [Work36-RecFix] iOS comp DOM 배치: captureStream 호출 직전에 body에 추가 (아래 captureStream 블록에서 처리)
+  // iOS Safari off-screen canvas → 0 video tracks 버그 근본 수정
 
   function drawComp(){
     if(!_compDrawing) return;
@@ -2819,18 +2825,25 @@ async function startRecording(){
   try{ compCtx.drawImage(vid,0,0,cw,ch); }catch(e){}
   S.drawCompInterval=setInterval(drawComp,33);
 
-  // [Work35-RecFix] ★5/18 검증된 방식 복원★: comp.captureStream(30)
-  // drawComp()가 33ms 간격으로 vid+skeleton을 compCtx에 그려줌 → comp.captureStream이 그 영상을 캡처
-  // cvs.captureStream(Work33/34) 방식은 10회 이상 시도에도 스켈레톤 오버레이 미포함 → 폐기
-  // getVideoTracks().length===0 체크 없음 (PATTERN-2 FIX 유지)
+  // [Work36-RecFix] comp.captureStream(30) + iOS DOM 배치
+  // iOS Safari: off-screen canvas의 captureStream은 항상 0 video tracks 반환 → 빈 녹화 버그
+  // 근본 원인: iOS는 document에 연결된(렌더링 중인) canvas만 신뢰성 있는 captureStream 보장
+  // 해결: comp를 body에 숨겨서 추가 → captureStream → stopRecording()에서 DOM 제거
+  // position:fixed + opacity:0.001 (0은 일부 브라우저 최적화로 렌더링 스킵 가능)
   let compStream;
   _iosDirectStream=false; // 매 녹화 시작 시 초기화
+  // [Work36-RecFix] iOS DOM 배치: captureStream 호출 전 body에 추가
+  if(!comp.parentNode){
+    comp.style.cssText='position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:-9999;';
+    document.body.appendChild(comp);
+    console.log('[Work36] comp appended to body for iOS captureStream');
+  }
   try{
     compStream=comp.captureStream?comp.captureStream(30):(comp.mozCaptureStream?comp.mozCaptureStream(30):null);
     if(!compStream) throw new Error('comp.captureStream unsupported');
-    console.log('[Work35] comp.captureStream OK, tracks:',compStream.getVideoTracks().length);
+    console.log('[Work36] comp.captureStream OK, tracks:',compStream.getVideoTracks().length);
   }catch(e){
-    console.warn('[Work35] comp.captureStream failed, fallback:',e.message);
+    console.warn('[Work36] comp.captureStream failed, fallback:',e.message);
     if(_srcMode==='camera'&&S.stream){
       compStream=S.stream;
       _iosDirectStream=true; // onstop에서 트랙 정지 스킵 (live stream 보호)
@@ -3552,7 +3565,7 @@ async function startLive(){
   _pendingSaveBlob=null;_pendingSaveName=''; // [Work15-Fix1] 새 세션 시작 시 이전 녹화 blob 초기화
   S.stats=freshStats();S.fbLog={};S.repCount=0;S.inZone=false;S.startTime=Date.now();
   _gateState='idle';_gateLastPrimeT=0;_gateWasInZone=false;_gateSpeechSkip=false;_lastRepT=0;_pendingGateFB=null;
-  _gateArmed=false; _gateEndDetected=false; _gateInGateStartT=0; // [Issue2 FIX]
+  _gateArmed=false; _gateEndDetected=false; _gateInGateStartT=0; _gateExitStartT=0; // [Issue2 FIX] [Work36-RepFix]
   _gateEntryPosLive=null; // [Work30-RepFix] 세션 시작 시 실시간 진입 위치 초기화
   if(_pendingGateFBTimer){clearTimeout(_pendingGateFBTimer);_pendingGateFBTimer=null;}
   _repPosSnapshots=[];_bestTimingPos=null;_bestTimingCmp=null;_bestTimingPosDevSoFar=Infinity; // [BUG5-FIX]
@@ -4791,39 +4804,6 @@ async function init(){
       }
     },3000);
     $('cam-wrap').addEventListener('touchstart',fixIOSAudioRouting,{once:true});
-  }catch(e){
-    console.error('Camera:',e);
-    $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';
-  }
-
-  $('mdl-txt').textContent=TX[CL].mdl_loading||'로딩 중';
-  try{
-    S.det=await poseDetection.createDetector(
-      poseDetection.SupportedModels.MoveNet,
-            {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,enableSmoothing:true,minPoseScore:0.2}
-    );
-    if(vid.readyState>=2)await S.det.estimatePoses(vid,{maxPoses:1});
-    S.ready=true;
-    $('mdot').classList.add('ok');$('mdl-txt').textContent=TX[CL].model_ready;
-    $('btn-main').disabled=false;
-    $('init').classList.add('gone');
-    setTimeout(checkCameraHealth,400);
-  }catch(e){
-    console.error('Model:',e);
-    $('mdot').classList.add('err');$('mdl-txt').textContent=TX[CL].model_fail;
-    $('init').classList.add('gone');
-    const rb=document.createElement('div');
-    rb.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:9999;background:#E53935;color:#fff;padding:14px 32px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer';
-    rb.textContent='↺ 새로고침';rb.onclick=()=>location.reload();
-    document.body.appendChild(rb);
-  }
-  speechSynthesis.getVoices();
-}
-
-window.addEventListener('load',init);
-</script>
-</body>
-</html>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            chstart',fixIOSAudioRouting,{once:true});
   }catch(e){
     console.error('Camera:',e);
     $('i-msg').textContent='카메라 오류. 새로고침 해주세요.';

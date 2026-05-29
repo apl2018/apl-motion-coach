@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v41</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v42</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1454,7 +1454,7 @@ async function _runDetection(){
         // [Work37-RepFix] 분析 시작 _START_DELAY(1.5s) 동안 게이트 강제 idle
         // cold-start TF.js 노이즈로 인한 phantom rep 방지 (Work36 wall-clock debounce 대체)
         // warm/cold GPU 모두에서 첫 1.5초는 카운팅 없음 → 이후부터 정상 카운팅
-        if(now2-S.startTime<_START_DELAY){
+        if(now2-S.startTime<(_srcMode==='file'?300:_START_DELAY)){
           if(_gateState!=='idle'){_gateState='idle';_gateInGateStartT=0;_gateExitStartT=0;}
         }
         // [Work18-GateFix] 정면 게이트: 각도ref 없어도 posRef/gateEntryPos 있으면 게이트 작동
@@ -2327,6 +2327,20 @@ function updateRepOsc(angles,ref){
           }
           if(_fbText) speak(_fbText);
           S.lastFB=Date.now(); // [BUG5] 항상 갱신
+        },_GATE_FB_DELAY);
+      } else if(_lastCmp&&!S.speak&&(now-S.lastFB)>=_FB_INTERVAL){ // [Work42-FBFix]
+        // 게이트 armed 안되어도 렙 감지 시 _FB_INTERVAL 경과하면 피드백 발화
+        // speechSynthesis.cancel() 없음 -> PATTERN-6(말 끊김) 방지
+        S.lastFB=now;
+        const _fbCmp2=_lastCmp;
+        setTimeout(()=>{
+          if(S.speak)return;
+          let _fbText2=null;
+          const _ov2=overall(_fbCmp2);
+          if(_ov2==='good'){const _gp2=CL==='ko'?['아주 좋아','굿']:CL==='ja'?['いいね','グッド']:CL==='zh'?['很好','好的']:CL==='es'?['Muy bien','Bien']:CL==='fr'?['«Très bien»','Bon']:['Great','Good'];_fbText2=_gp2[Math.floor(Math.random()*_gp2.length)];}
+          else{const _fb2=primaryFB(_fbCmp2);if(_fb2){const _m2=getFBMsg(_fb2);if(_m2)_fbText2=_m2;}}
+          if(_fbText2)speak(_fbText2);
+          S.lastFB=Date.now();
         },_GATE_FB_DELAY);
       }
     }

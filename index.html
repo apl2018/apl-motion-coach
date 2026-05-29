@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v40</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v41</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -2806,7 +2806,7 @@ async function startRecording(){
   let compStream;
   _iosDirectStream=false;
   try{
-    compStream=comp.captureStream?comp.captureStream(30):(comp.mozCaptureStream?comp.mozCaptureStream(30):null);
+    compStream=comp.captureStream?comp.captureStream(60):(comp.mozCaptureStream?comp.mozCaptureStream(60):null);
     if(!compStream) throw new Error('captureStream unsupported');
     console.log('[Work37] comp.captureStream OK, tracks:',compStream.getVideoTracks().length);
   }catch(e){
@@ -2878,7 +2878,7 @@ async function startRecording(){
       // [Work37-RecFix] 5/18 방식: start() timeslice 없음
       // timeslice(1000ms)는 파일이 1초 이내 종료 시 청크 미수신 위험 → 5/18처럼 start()만 사용
       // stop() 호출 시 남은 모든 버퍼가 ondataavailable로 전달됨 → timeslice 불필요
-      try{S.recorder.start(100);}catch(e){console.warn('[Work40] Recorder start:',e);}
+      try{S.recorder.start(33);}catch(e){console.warn('[Work41] Recorder start:',e);}
       _recStartMs=Date.now();
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
@@ -3183,7 +3183,7 @@ async function saveRecording(chunks,wallMs){
   const rawBlob=new Blob(chunks,{type:saveMime});
   // [BUG1-FIX] 모든 플랫폼에서 MP4 타임스탬프 보정 → 저장영상 2배속 버그 해결
   // 기존: iOS만 적용. 수정: isMP4&wallMs>0 이면 항상 적용 (Android Chrome MP4도 동일 문제)
-  const blob=(isMP4&&(wallMs||0)>0&&_moduleIOSCam)?await patchMP4Timestamps(rawBlob,wallMs||0):rawBlob;
+  const blob=rawBlob; // [Work41] patchMP4 removed: start(33) timeslice handles timestamps
   const now=new Date();
   const stamp=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
   const exName=S.ex.name;

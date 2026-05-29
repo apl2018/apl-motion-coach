@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v39</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v40</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -2858,7 +2858,7 @@ async function startRecording(){
   }else{
     const mimePriority=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
     mime=mimePriority.find(m=>MediaRecorder.isTypeSupported(m))||'video/mp4';
-    try{S.recorder=new MediaRecorder(compStream,{mimeType:mime,videoBitsPerSecond:12000000,audioBitsPerSecond:192000});}
+    try{S.recorder=new MediaRecorder(compStream,{mimeType:mime,videoBitsPerSecond:8000000,audioBitsPerSecond:128000});}
     catch(e){try{S.recorder=new MediaRecorder(compStream,{videoBitsPerSecond:8000000});}
              catch(e2){S.recorder=new MediaRecorder(compStream);}}
   }
@@ -2878,7 +2878,7 @@ async function startRecording(){
       // [Work37-RecFix] 5/18 방식: start() timeslice 없음
       // timeslice(1000ms)는 파일이 1초 이내 종료 시 청크 미수신 위험 → 5/18처럼 start()만 사용
       // stop() 호출 시 남은 모든 버퍼가 ondataavailable로 전달됨 → timeslice 불필요
-      try{S.recorder.start();}catch(e){console.warn('[Work37] Recorder start:',e);}
+      try{S.recorder.start(100);}catch(e){console.warn('[Work40] Recorder start:',e);}
       _recStartMs=Date.now();
       $('rec-dot').classList.add('on');$('rec-time').classList.add('on');
       S.recSec=0;updateRecTime();
@@ -3183,7 +3183,7 @@ async function saveRecording(chunks,wallMs){
   const rawBlob=new Blob(chunks,{type:saveMime});
   // [BUG1-FIX] 모든 플랫폼에서 MP4 타임스탬프 보정 → 저장영상 2배속 버그 해결
   // 기존: iOS만 적용. 수정: isMP4&wallMs>0 이면 항상 적용 (Android Chrome MP4도 동일 문제)
-  const blob=(isMP4&&(wallMs||0)>0)?await patchMP4Timestamps(rawBlob,wallMs||0):rawBlob;
+  const blob=(isMP4&&(wallMs||0)>0&&_moduleIOSCam)?await patchMP4Timestamps(rawBlob,wallMs||0):rawBlob;
   const now=new Date();
   const stamp=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
   const exName=S.ex.name;
@@ -4784,4 +4784,4 @@ async function init(){
 window.addEventListener('load',init);
 </script>
 </body>
-</html>
+</html>                                                                                                                                                                        

@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v38</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v39</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -1227,11 +1227,10 @@ function drawFrame(kps,cmp){
       _drawFrontLbl(mHip.x-18,mHip.y-8,side+Math.abs(v)+'°',_posCol('hipTilt'));
     }
     // 무릎 오프셋 — 각 무릎 옆
-    // [Issue3 FIX] _xfD<0 = 카메라-왼쪽≠신체-왼쪽 → 좌/우 버튼 레이블과 일치하도록 값 교환
-    // [Work17] 정면(front): _xfD<0 → 카메라좌=신체우(미러) → rKneeOff를 좌측 표시, front 고정
-    const _kSwapF=(_xfD<0);
-    const _lKV=_kSwapF?pos.rKneeOff:pos.lKneeOff, _lKC=_kSwapF?'rKneeOff':'lKneeOff';
-    const _rKV=_kSwapF?pos.lKneeOff:pos.rKneeOff, _rKC=_kSwapF?'lKneeOff':'rKneeOff';
+    // [Work39-KneeFix] extractPositions()의 _lrSign이 카메라 방향을 이미 보정함
+    // → _kSwapF 스왑 불필요, 오히려 반전 유발. lKneeOff→lKnee, rKneeOff→rKnee 직결.
+    const _lKV=pos.lKneeOff, _lKC='lKneeOff';
+    const _rKV=pos.rKneeOff, _rKC='rKneeOff';
     if(ok(lKnee)&&_lKV!=null){
       const p=coverXY(lKnee);
       const v=_lKV,t=(v>0?'+':'')+v;
@@ -1762,11 +1761,7 @@ function loop(){
     _runDetection();
   }
   if(S.live){
-    if(_srcMode==='file'&&(vid.ended||(vid.duration>0&&vid.currentTime>=vid.duration-0.1))){
-      // [Work38-RecFix] loop에서도 compStream 즉시 차단 → frozen 프레임 녹화 방지
-      if(S.compStream){S.compStream.getVideoTracks().forEach(t=>{try{t.stop();}catch(e){}});S.compStream=null;}
-      stopLive();return;
-    }
+    if(_srcMode==='file'&&(vid.ended||(vid.duration>0&&vid.currentTime>=vid.duration-0.1))){stopLive();return;}
     S.raf=requestAnimationFrame(loop);
   }
 }
@@ -2561,10 +2556,10 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       const v=pos.hipTilt,side=v>0?'우↓':'좌↓'; // [Issue4 FIX] 직접 부호 사용
       _lbl2(mHip.x-50,mHip.y-8,side+Math.abs(v)+'°',posCol2('hipTilt'));
     }
-    // [Issue3 FIX] drawFrameComp: _xfD2<0 → 좌/우 버튼 레이블과 값 일치시키기 위해 교환
-    const _kSwapF2=(_xfD2<0);
-    const _lKV2=_kSwapF2?pos.rKneeOff:pos.lKneeOff, _lKC2=_kSwapF2?'rKneeOff':'lKneeOff';
-    const _rKV2=_kSwapF2?pos.lKneeOff:pos.rKneeOff, _rKC2=_kSwapF2?'lKneeOff':'rKneeOff';
+    // [Work39-KneeFix] extractPositions()의 _lrSign이 카메라 방향을 이미 보정함
+    // → _kSwapF2 스왑 불필요, 오히려 반전 유발. lKneeOff→lKnee2, rKneeOff→rKnee2 직결.
+    const _lKV2=pos.lKneeOff, _lKC2='lKneeOff';
+    const _rKV2=pos.rKneeOff, _rKC2='rKneeOff';
     if(ok2(lKnee2)&&_lKV2!=null){
       const p=xy(lKnee2),v=_lKV2,t=(v>0?'+':'')+v;
       _lbl2(p.x-46,p.y-6,t,posCol2(_lKC2));
@@ -2743,10 +2738,8 @@ async function startRecording(){
         ||(vid.paused&&vid.currentTime>0&&vid.duration>0&&vid.currentTime>=vid.duration*0.90))){
       _compDrawing=false;
       if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
+      // [Work18-RecFix] compStream track 정지는 recorder.onstop에서 처리 (여기서 먼저 중단 시 빈 chunk 발생)
       try{compCtx.clearRect(0,0,cw,ch);}catch(e){}
-      // [Work38-RecFix] drawComp에서 compStream 즉시 차단: stopLive 처리 지연(TF.js/GC 블록) 동안
-      // captureStream이 frozen 마지막 프레임을 계속 녹화하는 문제 방지
-      if(S.compStream){S.compStream.getVideoTracks().forEach(t=>{try{t.stop();}catch(e){}});S.compStream=null;}
       if(S.live) stopLive(); else if(S.recorder&&S.recorder.state==='recording') stopRecording();
       return;
     }
@@ -2825,17 +2818,6 @@ async function startRecording(){
     }
   }
   S.compStream=compStream; // 정지 시 video track stop을 위해 저장
-  // [Work38-RecFix] 파일 모드: vid.ended DOM 이벤트로 compStream 즉시 차단
-  // 근거: TF.js/GC가 JS를 블록하면 setInterval(drawComp)·setTimeout(_recHardStop) 모두 지연됨
-  // DOM 이벤트는 JS 재개 즉시 실행 → captureStream에 frozen 프레임 유입 차단
-  if(_srcMode==='file'){
-    const _onVidEnded=()=>{
-      vid.removeEventListener('ended',_onVidEnded);
-      if(S.compStream){S.compStream.getVideoTracks().forEach(t=>{try{t.stop();}catch(e){}});S.compStream=null;}
-    };
-    vid.addEventListener('ended',_onVidEnded);
-    S._onVidEnded=_onVidEnded;
-  }
 
   // Audio: AudioContext + 마이크
   // [FIX-iOS-REC v3] iOS 직접 트랙 모드에서는 오디오 추가 생략 (간섭 방지)
@@ -2940,7 +2922,6 @@ function stopRecording(){
   _introUntil=0;
   if(_recStartTimer){clearTimeout(_recStartTimer);_recStartTimer=null;}
   if(S._recHardStop){clearTimeout(S._recHardStop);S._recHardStop=null;}
-  if(S._onVidEnded){try{vid.removeEventListener('ended',S._onVidEnded);}catch(e){}S._onVidEnded=null;} // [Work38-RecFix]
   if(_drawRafId){cancelAnimationFrame(_drawRafId);_drawRafId=null;}
   if(S.drawCompInterval){clearInterval(S.drawCompInterval);S.drawCompInterval=null;}
   if(S.recTimer){clearInterval(S.recTimer);S.recTimer=null;}

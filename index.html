@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v43</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v44</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -4166,16 +4166,17 @@ function extractPositions(kps){
   const shoulderTilt = (ok(lSh)&&ok(rSh))
     ? _deg1(Math.atan2(rSh.y-lSh.y, Math.abs(rSh.x-lSh.x))*R2D - baseline) : null;
   // ③ 몸통 측방 기울기 (°): 골반 중점→어깨 중점 편차. 양수=우측 기울기
+  // [Work44-TrunkFix] baseline 보정 적용: 어깨/골반기울기와 동일한 방식으로 통일
+  // atan2(dx, dy) - baseline: dx=어깨중점X-골반중점X, dy=골반중점Y-어깨중점Y(항상양수)
+  // 양수=우기울기, 음수=좌기울기. 카메라모드=자이로보정, 파일모드=발목선보정(Work43)
   let trunkLean = null;
   if(ok(lSh)&&ok(rSh)){
     const mHipX=(lHip.x+rHip.x)/2, mHipY=(lHip.y+rHip.y)/2;
     const mShX=(lSh.x+rSh.x)/2,   mShY=(lSh.y+rSh.y)/2;
     const dy=mHipY-mShY; // 양수 = 어깨가 골반보다 위(정상 자세)
-    // [FIX-TrunkDir v4] y축 기반 방향: rSh.y > lSh.y → 우측 기울기 (중력 방향 기반, 카메라 독립)
-    // shoulderTilt 공식과 동일 원리: y좌표는 좌우 반전 없이 항상 down=양수
     if(dy>0.04){
-      const leanDir=rSh.y>lSh.y?1:-1; // 오른어깨 낮으면 우기울기(+1)
-      trunkLean=leanDir*_deg1(Math.atan2(Math.abs(mShX-mHipX),dy)*R2D);
+      const dx=mShX-mHipX; // 부호 포함: 우측 편차=양수
+      trunkLean=_deg1(Math.atan2(dx,dy)*R2D-baseline);
     }
   }
   // ④ 골반 수평 이동 (% of hipW): 골반 중점 vs 발목 중점 편차. 양수=우측 이동

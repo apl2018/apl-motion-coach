@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v48</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v49</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -2802,13 +2802,16 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
     if(_lastPos){
       const pos=_lastPos, cmp=_lastPosCmp;
       const s=compH/960;
+      // [Work49] TX 다국어 라벨
+      const _Lr=TX[CL];
       const ROWS=[
-        {lbl:'어깨기울기', key:'shoulderTilt', type:'tilt'},
-        {lbl:'골반기울기', key:'hipTilt',      type:'tilt'},
-        {lbl:'몸통기울기', key:'trunkLean',    type:'lean'},
-        {lbl:'골반위치',   key:'hipShift',     type:'shift'},
-        {lbl:'무릎L',      key:'lKneeOff',     type:'knee'},
-        {lbl:'무릎R',      key:'rKneeOff',     type:'knee'},
+        {lbl:_Lr.pbar_sh||'어깨기울기', key:'shoulderTilt', type:'tilt'},
+        {lbl:_Lr.pbar_hip||'골반기울기', key:'hipTilt',     type:'tilt'},
+        {lbl:_Lr.pbar_trk||'몸통기울기', key:'trunkLean',  type:'lean'},
+        {lbl:(_Lr.pbar_hal||'골반')+' L', key:'lHipOff',   type:'knee'},
+        {lbl:(_Lr.pbar_hal||'골반')+' R', key:'rHipOff',   type:'knee'},
+        {lbl:(_Lr.pbar_kn||'무릎')+' L',  key:'lKneeOff',  type:'knee'},
+        {lbl:(_Lr.pbar_kn||'무릎')+' R',  key:'rKneeOff',  type:'knee'},
       ];
       const pw=Math.round(58*s), ih=Math.round(46*s), gap=Math.round(3*s), pad=Math.round(6*s);
       const totalH=ROWS.length*(ih+gap)-gap+pad*2;
@@ -3891,8 +3894,9 @@ function showSummary(elapsed){
     const fbEntries=Object.entries(S.fbLog).sort((a,b)=>b[1]-a[1]);
     if(fbEntries.length){
       fbEl.style.display='block';
-      const top=fbEntries.slice(0,3).map(([msg,cnt])=>`<strong>·</strong> ${msg} (${cnt}회)`).join('<br>');
-      fbEl.innerHTML=`<strong>주요 코칭 내용</strong><br>`+top;
+      const _cntU=TX[CL].sum_reps_unit||'회'; // [Work49]
+      const top=fbEntries.slice(0,3).map(([msg,cnt])=>`<strong>·</strong> ${msg} (${cnt}${_cntU.trim()||'×'})`).join('<br>');
+      fbEl.innerHTML=`<strong>${TX[CL].sum_coaching||'주요 코칭 내용'}</strong><br>`+top; // [Work49]
     }else{fbEl.style.display='none';}
 
   } else {
@@ -3926,7 +3930,7 @@ function showSummary(elapsed){
     const fbEntries=Object.entries(S.fbLog).sort((a,b)=>b[1]-a[1]);
     if(fbEntries.length){
       fbEl.style.display='block';
-      const cntLbl=CL==='ko'?'회':'×';
+      const cntLbl=(TX[CL].sum_reps_unit||'회').trim()||'×'; // [Work49]
       const top=fbEntries.slice(0,3).map(([msg,cnt])=>`<strong>·</strong> ${msg} (${cnt}${cntLbl})`).join('<br>');
       fbEl.innerHTML=`<strong>${L.sum_coaching}</strong><br>`+top;
     }else{fbEl.style.display='none';}

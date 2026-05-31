@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v44</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v45</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -535,39 +535,43 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
   <!-- Position mode bar (front/back view) — moved outside cam-wrap to avoid black overlay -->
   <div id="pos-bar">
       <div class="pm-row">
-        <span class="pm-lbl">어깨 기울기</span>
+        <span class="pm-lbl" id="pm-lbl-sh">어깨 기울기</span>
         <div class="pm-dot" id="pd-sh"></div>
         <span class="pm-deg" id="pv-sh">--</span>
       </div>
       <div class="pm-row">
-        <span class="pm-lbl">골반 기울기</span>
+        <span class="pm-lbl" id="pm-lbl-hip">골반 기울기</span>
         <div class="pm-dot" id="pd-hip"></div>
         <span class="pm-deg" id="pv-hip">--</span>
       </div>
       <div class="pm-row">
-        <span class="pm-lbl">몸통 기울기</span>
+        <span class="pm-lbl" id="pm-lbl-trk">몸통 기울기</span>
         <div class="pm-dot" id="pd-trk"></div>
         <span class="pm-deg" id="pv-trk">--</span>
       </div>
+      <!-- [Work45] 골반 위치 슬라이더 → 골반 L/R 정렬 (무릎과 동일 형식) -->
       <div class="pm-row">
-        <span class="pm-lbl">골반 위치</span>
-        <span id="pt-lbl-l" style="font-size:9px;color:rgba(255,255,255,.45);flex-shrink:0;min-width:10px;text-align:center">좌</span>
-        <div class="pm-track">
-          <div class="pm-refline" id="pr-pos"></div>
-          <div class="pm-thumb" id="pt-pos" style="left:50%"></div>
-        </div>
-        <span id="pt-lbl-r" style="font-size:9px;color:rgba(255,255,255,.45);flex-shrink:0;min-width:10px;text-align:center">우</span>
-        <span class="pm-val" id="pv-pos">--</span>
-      </div>
-      <div class="pm-row">
-        <span class="pm-lbl">무릎 정렬</span>
+        <span class="pm-lbl" id="pm-lbl-hal">골반 정렬</span>
         <div class="pm-lr">
           <div class="pm-half">
-            <span class="pm-sub">좌</span>
+            <span class="pm-sub" id="pm-sub-lho">좌</span>
+            <span class="pm-num" id="pv-lho">--</span>
+          </div>
+          <div class="pm-half">
+            <span class="pm-sub" id="pm-sub-rho">우</span>
+            <span class="pm-num" id="pv-rho">--</span>
+          </div>
+        </div>
+      </div>
+      <div class="pm-row">
+        <span class="pm-lbl" id="pm-lbl-kn">무릎 정렬</span>
+        <div class="pm-lr">
+          <div class="pm-half">
+            <span class="pm-sub" id="pm-sub-lk">좌</span>
             <span class="pm-num" id="pv-lk">--</span>
           </div>
           <div class="pm-half">
-            <span class="pm-sub">우</span>
+            <span class="pm-sub" id="pm-sub-rk">우</span>
             <span class="pm-num" id="pv-rk">--</span>
           </div>
         </div>
@@ -622,14 +626,14 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     </div>
 
     <div>
-      <div class="sec-lbl">분석 관절 선택</div>
+      <div class="sec-lbl" id="lbl-joints">분析 관절 선택</div>
       <div id="joint-sel-row">
-        <label class="jsel active" id="jsel-knee"><input type="checkbox" checked><div class="jdot"></div>무릎</label>
-        <label class="jsel active" id="jsel-hip"><input type="checkbox" checked><div class="jdot"></div>고관절</label>
-        <label class="jsel active" id="jsel-trunk"><input type="checkbox" checked><div class="jdot"></div>몸통</label>
-        <label class="jsel active" id="jsel-spine"><input type="checkbox" checked><div class="jdot"></div>경추</label>
-        <label class="jsel active" id="jsel-shoulder"><input type="checkbox" checked><div class="jdot"></div>어깨</label>
-        <label class="jsel active" id="jsel-elbow"><input type="checkbox" checked><div class="jdot"></div>팔꿈치</label>
+        <label class="jsel active" id="jsel-knee"><input type="checkbox" checked><div class="jdot"></div><span id="jlbl-knee">무릎</span></label>
+        <label class="jsel active" id="jsel-hip"><input type="checkbox" checked><div class="jdot"></div><span id="jlbl-hip">고관절</span></label>
+        <label class="jsel active" id="jsel-trunk"><input type="checkbox" checked><div class="jdot"></div><span id="jlbl-trunk">몸통</span></label>
+        <label class="jsel active" id="jsel-spine"><input type="checkbox" checked><div class="jdot"></div><span id="jlbl-spine">경추</span></label>
+        <label class="jsel active" id="jsel-shoulder"><input type="checkbox" checked><div class="jdot"></div><span id="jlbl-shoulder">어깨</span></label>
+        <label class="jsel active" id="jsel-elbow"><input type="checkbox" checked><div class="jdot"></div><span id="jlbl-elbow">팔꿈치</span></label>
       </div>
     </div>
     <!-- Trajectory graph (frontal mode) -->
@@ -787,6 +791,13 @@ ko:{flag:'🇰🇷',label:'KO',voice_lang:'ko-KR',
   voice_ref_fail:'자세 인식에 실패했습니다. 다시 시도해 주세요.',
   voice_ref_full:'전신이 보이도록 서 주세요.',
   model_ready:'AI\n준비\n완료',model_fail:'로드 실패',mdl_loading:'로딩 중',
+  sec_src:'분析 소스',sec_joints:'분析 관절 선택',src_cam:'📷 카메라',src_file:'📁 영상 파일',
+  pbar_sh:'어깨 기울기',pbar_hip:'골반 기울기',pbar_trk:'몸통 기울기',pbar_hal:'골반',pbar_kn:'무릎',
+  pbar_l:'좌',pbar_r:'우',tilt_r:'우↓',tilt_l:'좌↓',
+  btn_save_video:'📥 영상 저장',btn_save_orig:'📥 원본 영상 저장',
+  sensor_tap:'📱 탭 → 자이로 활성화',traj_lbl:'골반 이동 궤적 (8초)',
+  sum_stability:'자세 안정성',sum_stable:'안정적',sum_fair:'보통',sum_improve:'교정 필요',
+  sum_reps_done:'회 수행',sum_score_detail:'분석 점수',sum_total_frames:'프레임 분析',
   PRAISE:['완벽해!','아주 좋아!','훌륭해!','자세 좋아!'],
   FB:{
     knee_str:{warn:'무릎 좀더 구부려.',crit:'무릎 많이 구부려.'},
@@ -830,6 +841,13 @@ en:{flag:'🇺🇸',label:'EN',voice_lang:'en-US',
   voice_ref_fail:'Pose not detected. Please try again.',
   voice_ref_full:'Please stand so your full body is visible.',
   model_ready:'AI\nReady\n✓',model_fail:'Load Failed',mdl_loading:'Loading',
+  sec_src:'Analysis Source',sec_joints:'Joint Selection',src_cam:'📷 Camera',src_file:'📁 Video File',
+  pbar_sh:'Shoulder Tilt',pbar_hip:'Hip Tilt',pbar_trk:'Trunk Lean',pbar_hal:'Hip',pbar_kn:'Knee',
+  pbar_l:'L',pbar_r:'R',tilt_r:'R↓',tilt_l:'L↓',
+  btn_save_video:'📥 Save Video',btn_save_orig:'📥 Save Original',
+  sensor_tap:'📱 Tap → Enable Gyro',traj_lbl:'Hip Trajectory (8s)',
+  sum_stability:'Posture Stability',sum_stable:'Stable',sum_fair:'Fair',sum_improve:'Needs Work',
+  sum_reps_done:' reps done',sum_score_detail:'Score',sum_total_frames:' frames',
   PRAISE:['Perfect!','Great form!','Excellent!','Looking good!'],
   FB:{
     knee_str:{warn:'Bend your knee a bit more.',crit:'Bend your knee more.'},
@@ -873,6 +891,13 @@ ja:{flag:'🇯🇵',label:'JA',voice_lang:'ja-JP',
   voice_ref_fail:'姿勢を検出できませんでした。再試行してください。',
   voice_ref_full:'全身がカメラに映るようにしてください。',
   model_ready:'AI\n準備\n完了',model_fail:'読込失敗',mdl_loading:'読込中',
+  sec_src:'分析ソース',sec_joints:'関節選択',src_cam:'📷 カメラ',src_file:'📁 映像ファイル',
+  pbar_sh:'肩の傾き',pbar_hip:'骨盤の傾き',pbar_trk:'体幹の傾き',pbar_hal:'骨盤',pbar_kn:'膝',
+  pbar_l:'左',pbar_r:'右',tilt_r:'右↓',tilt_l:'左↓',
+  btn_save_video:'📥 動画保存',btn_save_orig:'📥 原本保存',
+  sensor_tap:'📱 タップ → ジャイロ有効化',traj_lbl:'骨盤軌跡 (8秒)',
+  sum_stability:'姿勢安定性',sum_stable:'安定',sum_fair:'普通',sum_improve:'要改善',
+  sum_reps_done:'回実施',sum_score_detail:'分析スコア',sum_total_frames:'フレーム分析',
   PRAISE:['完璧です！','とても良い！','素晴らしい！','姿勢が良いです！'],
   FB:{
     knee_str:{warn:'膝をもう少し曲げましょう。',crit:'膝をもっと曲げてください。90度を目指しましょう。'},
@@ -912,6 +937,13 @@ zh:{flag:'🇨🇳',label:'ZH',voice_lang:'zh-CN',
   voice_ref_fail:'未能识别姿势，请重试。',
   voice_ref_full:'请站立使全身在镜头内可见。',
   model_ready:'AI\n就绪\n✓',model_fail:'加载失败',mdl_loading:'加载中',
+  sec_src:'分析来源',sec_joints:'关节选择',src_cam:'📷 摄像头',src_file:'📁 视频文件',
+  pbar_sh:'肩部倾斜',pbar_hip:'骨盆倾斜',pbar_trk:'躯干倾斜',pbar_hal:'骨盆',pbar_kn:'膝盖',
+  pbar_l:'左',pbar_r:'右',tilt_r:'右↓',tilt_l:'左↓',
+  btn_save_video:'📥 保存视频',btn_save_orig:'📥 保存原始',
+  sensor_tap:'📱 点击 → 启用陀螺仪',traj_lbl:'骨盆轨迹 (8秒)',
+  sum_stability:'姿势稳定性',sum_stable:'稳定',sum_fair:'一般',sum_improve:'需改进',
+  sum_reps_done:'次完成',sum_score_detail:'分析评分',sum_total_frames:'帧分析',
   PRAISE:['太棒了！','非常好！','姿势完美！','继续保持！'],
   FB:{
     knee_str:{warn:'请稍微弯曲膝盖。',crit:'请多弯曲膝盖，目标90度。'},
@@ -951,6 +983,13 @@ es:{flag:'🇪🇸',label:'ES',voice_lang:'es-ES',
   voice_ref_fail:'Pose no detectada. Inténtalo de nuevo.',
   voice_ref_full:'Por favor, colócate para que todo el cuerpo sea visible.',
   model_ready:'IA\nlista\n✓',model_fail:'Error de carga',mdl_loading:'Cargando',
+  sec_src:'Fuente',sec_joints:'Selección articular',src_cam:'📷 Cámara',src_file:'📁 Archivo video',
+  pbar_sh:'Incl. hombro',pbar_hip:'Incl. cadera',pbar_trk:'Incl. tronco',pbar_hal:'Cadera',pbar_kn:'Rodilla',
+  pbar_l:'I',pbar_r:'D',tilt_r:'D↓',tilt_l:'I↓',
+  btn_save_video:'📥 Guardar video',btn_save_orig:'📥 Guardar original',
+  sensor_tap:'📱 Toca → Activar giroscopio',traj_lbl:'Trayectoria cadera (8s)',
+  sum_stability:'Estabilidad postural',sum_stable:'Estable',sum_fair:'Regular',sum_improve:'Mejorar',
+  sum_reps_done:' reps',sum_score_detail:'Puntuación',sum_total_frames:' frames',
   PRAISE:['Perfecto!','Excelente forma!','Brillante!','Muy bien!'],
   FB:{
     knee_str:{warn:'Dobla un poco más la rodilla.',crit:'Dobla más la rodilla. Apunta a 90 grados.'},
@@ -990,6 +1029,13 @@ fr:{flag:'🇫🇷',label:'FR',voice_lang:'fr-FR',
   voice_ref_fail:'Pose non détectée. Veuillez réessayer.',
   voice_ref_full:'Placez-vous pour que tout le corps soit visible.',
   model_ready:'IA\nprête\n✓',model_fail:'Échec chargement',mdl_loading:'Chargement',
+  sec_src:'Source',sec_joints:'Sélection articulaire',src_cam:'📷 Caméra',src_file:'📁 Fichier vidéo',
+  pbar_sh:'Incl. épaule',pbar_hip:'Incl. bassin',pbar_trk:'Incl. tronc',pbar_hal:'Bassin',pbar_kn:'Genou',
+  pbar_l:'G',pbar_r:'D',tilt_r:'D↓',tilt_l:'G↓',
+  btn_save_video:'📥 Sauvegarder',btn_save_orig:'📥 Sauvegarder original',
+  sensor_tap:'📱 Appuyer → Activer gyro',traj_lbl:'Trajectoire bassin (8s)',
+  sum_stability:'Stabilité posturale',sum_stable:'Stable',sum_fair:'Correct',sum_improve:'À améliorer',
+  sum_reps_done:' rép',sum_score_detail:'Score',sum_total_frames:' frames',
   PRAISE:['Parfait !','Très bien !','Excellent !','Belle forme !'],
   FB:{
     knee_str:{warn:'Fléchissez un peu plus le genou.',crit:'Fléchissez davantage le genou. Visez 90 degrés.'},
@@ -1025,7 +1071,9 @@ function freshStats(){
       trunkLean:    {g:0,w:0,c:0,sum:0,cnt:0},
       hipShift:     {g:0,w:0,c:0,sum:0,cnt:0},
       lKneeOff:     {g:0,w:0,c:0,sum:0,cnt:0},
-      rKneeOff:     {g:0,w:0,c:0,sum:0,cnt:0}
+      rKneeOff:     {g:0,w:0,c:0,sum:0,cnt:0},
+      lHipOff:      {g:0,w:0,c:0,sum:0,cnt:0},
+      rHipOff:      {g:0,w:0,c:0,sum:0,cnt:0}
     }
   };
 }
@@ -1217,13 +1265,13 @@ function drawFrame(kps,cmp){
     // 어깨 기울기 — 어깨 연결선 중앙 위
     if(ok(lSh)&&ok(rSh)&&pos.shoulderTilt!=null){
       const mSh=coverXY({x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2,score:1});
-      const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓';
+      const _L=TX[CL]; const v=pos.shoulderTilt,side=v>0?(_L.tilt_r||'우↓'):(_L.tilt_l||'좌↓'); // [Work45]
       _drawFrontLbl(mSh.x-18,mSh.y-12,side+Math.abs(v)+'°',_posCol('shoulderTilt'));
     }
     // 골반 기울기 — 골반 연결선 중앙 위
     if(ok(lHip)&&ok(rHip)&&pos.hipTilt!=null){
       const mHip=coverXY({x:(lHip.x+rHip.x)/2,y:(lHip.y+rHip.y)/2,score:1});
-      const v=pos.hipTilt,side=v>0?'우↓':'좌↓';
+      const _L2=TX[CL]; const v=pos.hipTilt,side=v>0?(_L2.tilt_r||'우↓'):(_L2.tilt_l||'좌↓'); // [Work45]
       _drawFrontLbl(mHip.x-18,mHip.y-8,side+Math.abs(v)+'°',_posCol('hipTilt'));
     }
     // 무릎 오프셋 — 각 무릎 옆
@@ -1404,7 +1452,7 @@ async function _runDetection(){
         if(_inScoreZone&&pos&&S.stats){
           const PM=S.stats.posMetrics;
           const cmpP=_lastPosCmp;
-          for(const k of ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff']){
+          for(const k of ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff','lHipOff','rHipOff']){ // [Work45]
             if(!S.jointSel[POS_JOINT_MAP[k]]) continue; // [BUG5-FIX] 선택된 관절만
             const v=pos[k];if(v==null) continue;
             PM[k].sum+=v;PM[k].cnt++;
@@ -2532,13 +2580,15 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
     // 골반 수평이동 기준선
     if(ok2(lHip2)&&ok2(rHip2)&&ok2(lAnk2)&&ok2(rAnk2)){
       const mh2=xy({x:(lHip2.x+rHip2.x)/2,y:(lHip2.y+rHip2.y)/2,score:1});
-      const ma2=xy({x:(lAnk2.x+rAnk2.x)/2,y:(lAnk2.y+rAnk2.y)/2,score:1});
-      ctx2.save();ctx2.setLineDash([5,5]);
-      ctx2.beginPath();ctx2.moveTo(mh2.x,mh2.y);ctx2.lineTo(ma2.x,ma2.y);
-      ctx2.strokeStyle='rgba(33,150,243,.5)';ctx2.lineWidth=2;ctx2.stroke();ctx2.setLineDash([]);
-      if(pos.hipShift!=null){ // [Work43] 우/좌 형식 + 기준자세 상대값
-        const hs=hipShiftLbl(pos.hipShift);
-        ctx2.textAlign='left';_lbl2(mh2.x+10,mh2.y+20,hs,posCol2('hipShift'));
+      // [Work45] 골반-발목 중점 연결선 제거 (hipShift 슬라이더 → L/R 표시로 대체)
+      // [Work45] hipShift 라벨 제거 → lHipOff/rHipOff 개별 표시
+      if(pos.lHipOff!=null&&ok2(lHip2)){
+        const lhp=xy(lHip2),lhv=(pos.lHipOff>0?'+':'')+pos.lHipOff;
+        ctx2.textAlign='right';_lbl2(lhp.x-8,lhp.y-16,'L:'+lhv,posCol2('lHipOff'));
+      }
+      if(pos.rHipOff!=null&&ok2(rHip2)){
+        const rhp=xy(rHip2),rhv=(pos.rHipOff>0?'+':'')+pos.rHipOff;
+        ctx2.textAlign='left';_lbl2(rhp.x+8,rhp.y-16,'R:'+rhv,posCol2('rHipOff'));
       }
       ctx2.restore();
     }
@@ -2562,12 +2612,12 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
     const _xfD2=(S.dir==='back'?1:-1); // [Work17] frontFlip 제거
     if(ok2(lSh2)&&ok2(rSh2)&&pos.shoulderTilt!=null){
       const mSh=xy({x:(lSh2.x+rSh2.x)/2,y:(lSh2.y+rSh2.y)/2,score:1});
-      const v=pos.shoulderTilt,side=v>0?'우↓':'좌↓'; // [Issue4 FIX] 직접 부호 사용
+      const _Lc=TX[CL]; const v=pos.shoulderTilt,side=v>0?(_Lc.tilt_r||'우↓'):(_Lc.tilt_l||'좌↓'); // [Work45]
       _lbl2(mSh.x-50,mSh.y-10,side+Math.abs(v)+'°',posCol2('shoulderTilt'));
     }
     if(ok2(lHip2)&&ok2(rHip2)&&pos.hipTilt!=null){
       const mHip=xy({x:(lHip2.x+rHip2.x)/2,y:(lHip2.y+rHip2.y)/2,score:1});
-      const v=pos.hipTilt,side=v>0?'우↓':'좌↓'; // [Issue4 FIX] 직접 부호 사용
+      const _Lc2=TX[CL]; const v=pos.hipTilt,side=v>0?(_Lc2.tilt_r||'우↓'):(_Lc2.tilt_l||'좌↓'); // [Work45]
       _lbl2(mHip.x-50,mHip.y-8,side+Math.abs(v)+'°',posCol2('hipTilt'));
     }
     // [Work39-KneeFix] extractPositions()의 _lrSign이 카메라 방향을 이미 보정함
@@ -3174,7 +3224,7 @@ async function saveRecording(chunks,wallMs){
       const _saveBtn=$('btn-sum-save');
       if(_saveBtn){
         _saveBtn.style.display='block';
-        _saveBtn.textContent='📥 원본 영상 저장';
+        _saveBtn.textContent=TX[CL].btn_save_orig||'📥 원본 영상 저장'; // [Work45]
         _saveBtn.style.background='';
         _saveBtn.style.pointerEvents='';
       }
@@ -3204,7 +3254,7 @@ async function saveRecording(chunks,wallMs){
   const fname=`APL_${exName}_${stamp}.${ext}`;
   _pendingSaveBlob=blob;_pendingSaveName=fname;
   const _saveBtn=$('btn-sum-save');
-  if(_saveBtn){_saveBtn.style.display='block';_saveBtn.textContent='📥 영상 저장';}
+  if(_saveBtn){_saveBtn.style.display='block';_saveBtn.textContent=TX[CL].btn_save_video||'📥 영상 저장';} // [Work45]
 }
 async function shareRecording(forceDownload){
   if(!_pendingSaveBlob){return;}
@@ -3683,9 +3733,9 @@ function showSummary(elapsed){
   if(isFrontal()){
     // ── 정면/후면 결과: 자세 위치 지표 기반 ──────────────────────────────
     const PM=st.posMetrics;
-    const posKeys=['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff'];
-    const posLbls={shoulderTilt:'어깨기울기',hipTilt:'골반기울기',trunkLean:'몸통기울기',hipShift:'골반위치',lKneeOff:'무릎 L',rKneeOff:'무릎 R'};
-    const posUnit={shoulderTilt:'°',hipTilt:'°',trunkLean:'°',hipShift:'%',lKneeOff:'%',rKneeOff:'%'};
+    const posKeys=['shoulderTilt','hipTilt','trunkLean','lHipOff','rHipOff','lKneeOff','rKneeOff']; // [Work45]
+    const L45s=TX[CL]; const posLbls={shoulderTilt:L45s.pbar_sh||'어깨기울기',hipTilt:L45s.pbar_hip||'골반기울기',trunkLean:L45s.pbar_trk||'몸통기울기',lHipOff:(L45s.pbar_hal||'골반')+' L',rHipOff:(L45s.pbar_hal||'골반')+' R',lKneeOff:(L45s.pbar_kn||'무릎')+' L',rKneeOff:(L45s.pbar_kn||'무릎')+' R'}; // [Work45]
+    const posUnit={shoulderTilt:'°',hipTilt:'°',trunkLean:'°',lHipOff:'%',rHipOff:'%',lKneeOff:'%',rKneeOff:'%'}; // [Work45]
     // 선택된 관절만 포함 (POS_JOINT_MAP 기준)
     const selPosKeys=posKeys.filter(k=>S.jointSel[POS_JOINT_MAP[k]]!==false);
     // [Issue5 FIX] per-rep 스냅샷 기반 점수 (기준자세 타이밍 ±0.1s best frame)
@@ -3715,7 +3765,7 @@ function showSummary(elapsed){
     scoreEl.textContent=pct+'점';
     scoreEl.className='sum-score-num '+(pct>=70?'good':pct>=45?'warn':'crit'); // [Issue5 FIX] 기준 완화
     const _snapLbl=_useSnap?'총 '+_repPosSnapshots.length+'회 분석':'총 '+st.totalFrames+'프레임 분석';
-    $('sum-score-lbl').innerHTML='자세 안정성<br><span style="font-size:11px">'+_snapLbl+'</span>';
+    const _Ls=TX[CL]; $('sum-score-lbl').innerHTML=(_Ls.sum_stability||'자세 안정성')+'<br><span style="font-size:11px">'+_snapLbl+'</span>';
     $('sum-joints-lbl').textContent='항목별 자세 분석';
     for(const k of selPosKeys){
       let g,w,c,avg;
@@ -3732,8 +3782,8 @@ function showSummary(elapsed){
       div.innerHTML=`<span class="bar-name" style="width:58px;font-size:11px">${posLbls[k]}</span><div class="bar-track"><div class="bar-g" style="width:${gp}%"></div><div class="bar-w" style="width:${wp}%"></div><div class="bar-c" style="width:${cp}%"></div></div><span class="bar-pct" style="width:42px;font-size:10px">±${avg}${posUnit[k]}</span>`;
       bars.appendChild(div);
     }
-    const qual=pct>=80?'안정적':pct>=50?'보통':'교정 필요';
-    const rows=[['운동 종목',exName],['운동 시간',m+':'+s],['분석 점수',pct+'점  ('+qual+')']];
+    const _Lq=TX[CL]; const qual=pct>=80?(_Lq.sum_stable||'안정적'):pct>=50?(_Lq.sum_fair||'보통'):(_Lq.sum_improve||'교정 필요'); // [Work45]
+    const _Lrow=TX[CL]; const rows=[[_Lrow.sum_exercise||'운동 종목',exName],[_Lrow.sum_time||'운동 시간',m+':'+s],[_Lrow.sum_score_detail||'분析 점수',pct+(CL==='ko'?'점':'pts')+'  ('+qual+')']]; // [Work45]
     for(const[l,v]of rows){
       const d=document.createElement('div');d.className='sum-row';
       d.innerHTML=`<span class="sum-row-lbl">${l}</span><span class="sum-row-val">${v}</span>`;
@@ -3976,7 +4026,7 @@ function applyLang(){
   if(zb.classList.contains('in'))zb.textContent=L.zone_in;
   else if(zb.classList.contains('out'))zb.textContent=L.zone_out;
   $('btn-ref-stop').textContent=L.btn_ref_stop;
-  const lsrc=$('lbl-src');if(lsrc)lsrc.textContent=CL==='ko'?'분석 소스':'Analysis Source';
+  // [Work45] lbl-src: applyLang 마지막에서 번역
   $('fp-title').textContent=L.fp_title;
   $('fp-prev').textContent=L.fp_prev;
   $('fp-next').textContent=L.fp_next;
@@ -3984,6 +4034,27 @@ function applyLang(){
   if($('mdot').classList.contains('ok'))$('mdl-txt').textContent=L.model_ready;
   else if($('mdot').classList.contains('err'))$('mdl-txt').textContent=L.model_fail;
   else $('mdl-txt').textContent=L.mdl_loading;
+  // [Work45] 추가 번역 항목
+  const ljt=$('lbl-joints');if(ljt)ljt.textContent=L.sec_joints||'분析 관절 선택';
+  const lsrc2=$('lbl-src');if(lsrc2)lsrc2.textContent=L.sec_src||'분析 소스';
+  const scam=$('src-cam-btn');if(scam)scam.textContent=L.src_cam||'📷 카메라';
+  const sfile=$('src-file-btn');if(sfile)sfile.textContent=L.src_file||'📁 영상 파일';
+  for(const k of ['knee','hip','trunk','spine','shoulder','elbow']){
+    const jlEl=$('jlbl-'+k);if(jlEl)jlEl.textContent=L['joint_'+k]||jlEl.textContent;
+  }
+  const pmSh=$('pm-lbl-sh');if(pmSh)pmSh.textContent=L.pbar_sh||'어깨 기울기';
+  const pmHip=$('pm-lbl-hip');if(pmHip)pmHip.textContent=L.pbar_hip||'골반 기울기';
+  const pmTrk=$('pm-lbl-trk');if(pmTrk)pmTrk.textContent=L.pbar_trk||'몸통 기울기';
+  const pmHal=$('pm-lbl-hal');if(pmHal)pmHal.textContent=(L.pbar_hal||'골반')+' 정렬';
+  const pmKn=$('pm-lbl-kn');if(pmKn)pmKn.textContent=(L.pbar_kn||'무릎')+' 정렬';
+  ['lho','rho','lk','rk'].forEach((id,i)=>{
+    const el=$('pm-sub-'+id);if(el)el.textContent=i%2===0?(L.pbar_l||'좌'):(L.pbar_r||'우');
+  });
+  const sensorEl=$('pm-sensor-lbl');
+  if(sensorEl&&!_sensorReady)sensorEl.textContent=L.sensor_tap||'📱 탭 → 자이로 활성화';
+  const trajEl=$('traj-lbl');if(trajEl)trajEl.textContent=L.traj_lbl||'골반 이동 궤적 (8초)';
+  const sbtn=$('btn-sum-save');
+  if(sbtn&&sbtn.style.display!=='none')sbtn.textContent=L.btn_save_video||'📥 영상 저장';
 }
 
 // ── APP HEIGHT FIX (Safari/Chrome vs KakaoTalk viewport 통일) ────────────────
@@ -4058,10 +4129,10 @@ let _lastPosCmp = null;
 let _posCmpBuf = []; // [Work35-CmpSmooth] 최근 cmp 슬라이딩 윈도우 버퍼 (피드백 안정화용)
 const TRAJ_MS = 8000;
 // 정면/후면 지표 임계값: degree 단위(shoulderTilt/hipTilt/trunkLean), % 단위(hipShift/knee)
-const POS_THR = {shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:15, lKneeOff:12, rKneeOff:12}; // [Issue5 FIX] 3→5° (허용 오차 확대)
+const POS_THR = {shoulderTilt:5, hipTilt:5, trunkLean:5, hipShift:15, lKneeOff:12, rKneeOff:12, lHipOff:20, rHipOff:20}; // [Work45] // [Issue5 FIX] 3→5° (허용 오차 확대)
 const ST_COL_POS = {good:'#4CAF50', warn:'#FFC107', crit:'#F44336', unk:'#555'};
 // 정면 지표 → 관절 선택(S.jointSel) 키 매핑
-const POS_JOINT_MAP = {shoulderTilt:'shoulder', hipTilt:'hip', trunkLean:'trunk', hipShift:'hip', lKneeOff:'knee', rKneeOff:'knee'};
+const POS_JOINT_MAP = {shoulderTilt:'shoulder', hipTilt:'hip', trunkLean:'trunk', hipShift:'hip', lKneeOff:'knee', rKneeOff:'knee', lHipOff:'hip', rHipOff:'hip'}; // [Work45]
 // 영상 저장 보류 blob (saveRecording에서 세팅, shareRecording에서 소비)
 let _pendingSaveBlob=null, _pendingSaveName='';
 const _deg1 = v => Math.round(v*10)/10; // 소수점 1자리 반올림
@@ -4205,15 +4276,21 @@ function extractPositions(kps){
   const _rKRaw=kneeOff(rHip,rKnee,rAnk);
   const lKneeOff=_lKRaw!=null?_lKRaw*_lrSign:null;
   const rKneeOff=_rKRaw!=null?-_rKRaw*_lrSign:null;
+  // [Work45] 골반 L/R: 각 골반점이 해당 발목 수직선 대비 좌우 편차 (% of hipW)
+  // kneeOff와 동일한 _lrSign 부호 규칙: 양수=outward, 음수=inward
+  const lHipRaw=hasAnk&&ok(lAnk)?Math.round(((lHip.x-lAnk.x)/hipW)*100):null;
+  const rHipRaw=hasAnk&&ok(rAnk)?Math.round(((rHip.x-rAnk.x)/hipW)*100):null;
+  const lHipOff=lHipRaw!=null?lHipRaw*_lrSign:null;
+  const rHipOff=rHipRaw!=null?-rHipRaw*_lrSign:null;
   // 센서 정보 포함해서 반환 (디버그 및 UI 표시용)
-  return {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff, hipW,
+  return {shoulderTilt, hipTilt, trunkLean, hipShift, lKneeOff, rKneeOff, lHipOff, rHipOff, hipW,
           baseline, sensorUsed:_sensorReady};
 }
 
 function comparePos(pos, ref){
   if(!pos||!ref) return null;
   const r = {};
-  for(const k of ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff']){
+  for(const k of ['shoulderTilt','hipTilt','trunkLean','hipShift','lKneeOff','rKneeOff','lHipOff','rHipOff']){ // [Work45]
     const cur=pos[k], rv=ref[k];
     if(cur==null||rv==null){r[k]={cur,dev:null,st:'unk'};continue;}
     const dev = cur-rv;
@@ -4306,45 +4383,27 @@ function updatePosBar(pos, cmp){
   setDeg('pd-hip','pv-hip', pos?pos.hipTilt:null, 'hipTilt','tilt');
   setDeg('pd-trk','pv-trk', pos?pos.trunkLean:null, 'trunkLean','lean');
 
-  // ② 골반 위치 (슬라이더)
-  const thumb=$('pt-pos'), refLine=$('pr-pos'), valEl=$('pv-pos');
-  // [Work33-KneeFix] ★버그 수정★: _camFlip를 if(thumb){} 블록 밖으로 이동
-  // 기존 버그: const _camFlip가 if(thumb){} 블록 내부(block-scoped)에 선언되었으나
-  //   if(refLine){} 블록의 line 4318에서 ref.hipShift*_camFlip 평가 시 접근 시도
-  //   → 기준자세(ref)가 존재할 때마다 ReferenceError 발생
-  //   → try/catch에서 조용히 흡수 → knee 섹션(4334-4344)이 실행 안됨 → '--' 표시
-  // 수정: _camFlip을 함수 스코프(블록 밖)에 선언 → 두 if 블록 모두에서 접근 가능
-  const _camFlip=(isFrontal()&&S.dir==='front')?-1:1;
-  if(thumb){
-    // [FIX-HipSlider v3] body-space → camera-space 변환 + isFrontal 반전
-    // pos.hipShift는 _pNorm 보정된 body-space (양수=신체우). 슬라이더는 camera-space 필요
-    // 후면카메라(_lastPNorm=-1): 신체우=카메라좌 → 반전 필요
-    // 전면카메라(_lastPNorm=+1): 신체우=카메라우(미러) → 그대로
-    // 정면분析(isFrontal): 후면분析과 반대 방향으로 추가 반전 필요
-    // [Work19-SliderFix] _lastPNorm 제거 → S.dir 직접 사용 (첫 프레임부터 즉시 올바른 방향)
-    // front: 신체우=화면좌 → _camFlip=-1(슬라이더좌=신체우) / back: 신체우=화면우 → _camFlip=1
-    const hipShiftCam=pos?pos.hipShift*_camFlip:0;
-    const v=hipShiftCam, range=80;
-    thumb.style.left=Math.max(2,Math.min(98,((v+range)/(2*range))*100))+'%';
-    const st=cmp&&cmp.hipShift?cmp.hipShift.st:'unk';
-    thumb.style.background=ST_COL_POS[st]||'#2196F3';
+  // ② 골반 정렬 L/R [Work45: 슬라이더 → L/R 수치 표시]
+  const L45=TX[CL];
+  const lhoEl=$('pv-lho'), rhoEl=$('pv-rho');
+  if(lhoEl){
+    const v=pos?pos.lHipOff:null;
+    lhoEl.textContent=v!=null?(v>0?'+':'')+v:'--';
+    const st=cmp&&cmp.lHipOff?cmp.lHipOff.st:'unk';
+    const col=ST_COL_POS[st]||'#fff'; lhoEl.style.color=col==='#555'?'#fff':col;
   }
-  if(valEl) valEl.textContent=pos&&pos.hipShift!=null?hipShiftLbl(pos.hipShift):'--'; // [Work43]
-  const ref=_posRef[S.ex.id];
-  if(refLine){
-    const hipRefCam=ref?ref.hipShift*_camFlip:null; // [Work15-Fix2]
-    const rv=hipRefCam; // [Work17] frontFlip 제거
-    if(rv!=null){refLine.style.left=Math.max(2,Math.min(98,((rv+80)/160)*100))+'%';refLine.style.display='block';}
-    else refLine.style.display='none';
+  if(rhoEl){
+    const v=pos?pos.rHipOff:null;
+    rhoEl.textContent=v!=null?(v>0?'+':'')+v:'--';
+    const st=cmp&&cmp.rHipOff?cmp.rHipOff.st:'unk';
+    const col=ST_COL_POS[st]||'#fff'; rhoEl.style.color=col==='#555'?'#fff':col;
   }
-  // [Work20-SliderLabel] 정면분析: 화면 왼쪽="우"(선수 오른쪽), 화면 오른쪽="좌"(선수 왼쪽)
-  // 후면/측면분析: 화면 왼쪽="좌", 화면 오른쪽="우"
-  const lblL=$('pt-lbl-l'),lblR=$('pt-lbl-r');
-  if(lblL&&lblR){
-    if(S.dir==='front'){lblL.textContent='우';lblR.textContent='좌';}
-    else{lblL.textContent='좌';lblR.textContent='우';}
-  }
-
+  // 골반 L/R 언어 라벨
+  ['lho','rho'].forEach((id,i)=>{
+    const el=$('pm-sub-'+id);if(el)el.textContent=i===0?(L45.pbar_l||'좌'):(L45.pbar_r||'우');
+  });
+  // 기존 slider 변수: pv-pos 없으면 skip (호환성)
+  const valEl=$('pv-pos'); // [Work45] 구버전 레이아웃 호환
   // ③ 무릎 정렬
   // [Work31-KneeBarFix] unk 상태(#555 어두운 회색)는 어두운 배경에서 안 보임 → #fff(흰색)로 변환
   // 어깨/골반/몸통은 setDeg()에서 col==='#555'?'#fff':col 보정이 있었으나 무릎은 누락됐음

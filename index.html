@@ -3821,7 +3821,7 @@ function showSummary(elapsed){
     const pct=totalAll>0?Math.max(35,Math.round(totalW/totalAll*100)):0;
     scoreEl.textContent=pct+(TX[CL].score_unit||'점'); // [Work46]
     scoreEl.className='sum-score-num '+(pct>=70?'good':pct>=45?'warn':'crit'); // [Issue5 FIX] 기준 완화
-    const     const _Ls=TX[CL];
+    const _Ls=TX[CL];
     const _snapLbl=_useSnap
       ?(_Ls.sum_snap_rep||'총 ')+_repPosSnapshots.length+(_Ls.sum_snap_rep2||'회 분석')
       :(_Ls.sum_snap_frame||'총 ')+st.totalFrames+(_Ls.sum_snap_frame2||'프레임 분석');

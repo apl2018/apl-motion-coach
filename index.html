@@ -483,7 +483,7 @@ body{width:100%;height:100%;height:-webkit-fill-available;overflow:hidden;backgr
     <div class="h-brand">
       <div class="h-brand-txt">
         <div class="h-apl">APL</div>
-        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v47</span></div>
+        <div class="h-mc">Motion Coach <span id="ver-badge" style="font-size:9px;opacity:.5;letter-spacing:0">v48</span></div>
       </div>
     </div>
     <div id="hdr-right">
@@ -807,6 +807,7 @@ ko:{flag:'🇰🇷',label:'KO',voice_lang:'ko-KR',
   pos_lk_out:'왼 무릎 바깥으로!',pos_lk_in:'왼 무릎 안으로!',
   pos_rk_out:'오른 무릎 바깥으로!',pos_rk_in:'오른 무릎 안으로!',
   sum_snap_rep:'총 ',sum_snap_rep2:'회 분析',sum_snap_frame:'총 ',sum_snap_frame2:'프레임 분析',
+  pbar_align:' 정렬',
   sensor_gyro:'수평기준: 자이로 (γ',sensor_ankle:'수평기준: 발목선',sensor_screen:'수평기준: 화면 수평',
   sensor_active:'✅ 자이로 활성 (γ',sensor_activating:'🔄 자이로 활성화 중...',
   sensor_fail:'❌ 자이로 실패 — 설정 확인',sensor_tap2:'📱 여기 탭 → 자이로 활성화',
@@ -870,6 +871,7 @@ en:{flag:'🇺🇸',label:'EN',voice_lang:'en-US',
   pos_lk_out:'Left knee out!',pos_lk_in:'Left knee in!',
   pos_rk_out:'Right knee out!',pos_rk_in:'Right knee in!',
   sum_snap_rep:'',sum_snap_rep2:' reps analyzed',sum_snap_frame:'',sum_snap_frame2:' frames',
+  pbar_align:' Align',
   sensor_gyro:'Ref: Gyro (γ',sensor_ankle:'Ref: Ankle line',sensor_screen:'Ref: Screen level',
   sensor_active:'✅ Gyro active (γ',sensor_activating:'🔄 Activating gyro...',
   sensor_fail:'❌ Gyro failed — check settings',sensor_tap2:'📱 Tap → Enable Gyro',
@@ -933,6 +935,7 @@ ja:{flag:'🇯🇵',label:'JA',voice_lang:'ja-JP',
   pos_lk_out:'左膝を外へ！',pos_lk_in:'左膝を内へ！',
   pos_rk_out:'右膝を外へ！',pos_rk_in:'右膝を内へ！',
   sum_snap_rep:'',sum_snap_rep2:'回分析',sum_snap_frame:'',sum_snap_frame2:'フレーム',
+  pbar_align:' 整列',
   sensor_gyro:'水平基準: ジャイロ (γ',sensor_ankle:'水平基準: 足首ライン',sensor_screen:'水平基準: 画面水平',
   sensor_active:'✅ ジャイロ有効 (γ',sensor_activating:'🔄 ジャイロ有効化中...',
   sensor_fail:'❌ ジャイロ失敗 — 設定を確認',sensor_tap2:'📱 タップ → ジャイロ有効化',
@@ -992,6 +995,7 @@ zh:{flag:'🇨🇳',label:'ZH',voice_lang:'zh-CN',
   pos_lk_out:'左膝外展！',pos_lk_in:'左膝内收！',
   pos_rk_out:'右膝外展！',pos_rk_in:'右膝内收！',
   sum_snap_rep:'',sum_snap_rep2:'次分析',sum_snap_frame:'',sum_snap_frame2:'帧',
+  pbar_align:' 对齐',
   sensor_gyro:'水平基准: 陀螺仪 (γ',sensor_ankle:'水平基准: 踝关节线',sensor_screen:'水平基准: 屏幕水平',
   sensor_active:'✅ 陀螺仪有效 (γ',sensor_activating:'🔄 陀螺仪激活中...',
   sensor_fail:'❌ 陀螺仪失败 — 请检查设置',sensor_tap2:'📱 点击 → 启用陀螺仪',
@@ -1051,6 +1055,7 @@ es:{flag:'🇪🇸',label:'ES',voice_lang:'es-ES',
   pos_lk_out:'¡Rodilla izq. afuera!',pos_lk_in:'¡Rodilla izq. adentro!',
   pos_rk_out:'¡Rodilla der. afuera!',pos_rk_in:'¡Rodilla der. adentro!',
   sum_snap_rep:'',sum_snap_rep2:' reps analizados',sum_snap_frame:'',sum_snap_frame2:' frames',
+  pbar_align:' Alineación',
   sensor_gyro:'Ref: Giróscopo (γ',sensor_ankle:'Ref: Línea tobillo',sensor_screen:'Ref: Pantalla nivelada',
   sensor_active:'✅ Giróscopo activo (γ',sensor_activating:'🔄 Activando giróscopo...',
   sensor_fail:'❌ Giróscopo fallo — revisar config.',sensor_tap2:'📱 Toca → Activar giróscopo',
@@ -1110,6 +1115,7 @@ fr:{flag:'🇫🇷',label:'FR',voice_lang:'fr-FR',
   pos_lk_out:'Genou gauche ext. !',pos_lk_in:'Genou gauche int. !',
   pos_rk_out:'Genou droit ext. !',pos_rk_in:'Genou droit int. !',
   sum_snap_rep:'',sum_snap_rep2:' rép analysées',sum_snap_frame:'',sum_snap_frame2:' frames',
+  pbar_align:' Alignement',
   sensor_gyro:'Réf: Gyro (γ',sensor_ankle:'Réf: Ligne chevilles',sensor_screen:'Réf: Écran horizontal',
   sensor_active:'✅ Gyro actif (γ',sensor_activating:'🔄 Activation gyro...',
   sensor_fail:'❌ Gyro échoué — vérifier paramètres',sensor_tap2:'📱 Appuyer → Activer gyro',
@@ -2654,7 +2660,7 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
       ctx2.beginPath();ctx2.arc(mid2.x,mid2.y,5,0,Math.PI*2);ctx2.fillStyle=tc;ctx2.fill();
       if(pos.trunkLean!=null){
         // [FIX-TrunkDir v3] body-centric 투영으로 부호 자동 결정
-        const side2=pos.trunkLean>0?'우 ':'좌 ';
+        const side2=pos.trunkLean>0?(TX[CL].lean_r||'우')+' ':(TX[CL].lean_l||'좌')+' '; // [Work48]
         ctx2.textAlign='left';
         _lbl2(mid2.x+10,mid2.y-4,side2+Math.abs(pos.trunkLean)+'°',tc);
       }
@@ -2756,7 +2762,7 @@ function drawFrameComp(ctx2,compW,compH,kps,cmp){
   // Only show for side view — frontal uses position metrics (pos-bar), not angles
   if(!isFrontal()){
     const KEYS=['knee','hip','trunk','spine','shoulder','elbow'];
-    const LBLS=['무릎','고관절','몸통','경추','어깨','팔꿈치'];
+    const LBLS=KEYS.map(k=>TX[CL]['joint_'+k]||k); // [Work48] TX 다국어
     const s=compH/960; // scale factor: design base = 960px height
     const pw=Math.round(52*s),ih=Math.round(50*s),gap=Math.round(3*s),pad=Math.round(6*s);
     const totalH=KEYS.length*(ih+gap)-gap+pad*2;
@@ -3849,9 +3855,14 @@ function showSummary(elapsed){
     scoreEl.textContent=pct+(TX[CL].score_unit||'점'); // [Work46]
     scoreEl.className='sum-score-num '+(pct>=70?'good':pct>=45?'warn':'crit'); // [Issue5 FIX] 기준 완화
     const _Ls=TX[CL];
+    // [Work48] null-check: '' is valid (non-Korean), must not fall back to '총 '
+    const _srpfx=_Ls.sum_snap_rep!=null?_Ls.sum_snap_rep:'총 ';
+    const _srsfx=_Ls.sum_snap_rep2!=null?_Ls.sum_snap_rep2:'회 분析';
+    const _sfpfx=_Ls.sum_snap_frame!=null?_Ls.sum_snap_frame:'총 ';
+    const _sfsfx=_Ls.sum_snap_frame2!=null?_Ls.sum_snap_frame2:'프레임 분析';
     const _snapLbl=_useSnap
-      ?(_Ls.sum_snap_rep||'총 ')+_repPosSnapshots.length+(_Ls.sum_snap_rep2||'회 분석')
-      :(_Ls.sum_snap_frame||'총 ')+st.totalFrames+(_Ls.sum_snap_frame2||'프레임 분석');
+      ?_srpfx+_repPosSnapshots.length+_srsfx
+      :_sfpfx+st.totalFrames+_sfsfx;
     $('sum-score-lbl').innerHTML=(_Ls.sum_stability||'자세 안정성')+'<br><span style="font-size:11px">'+_snapLbl+'</span>'; // [Work46]
     $('sum-joints-lbl').textContent=TX[CL].sum_joints_title||'항목별 자세 분析'; // [Work46]
     for(const k of selPosKeys){
@@ -4134,8 +4145,8 @@ function applyLang(){
   const pmSh=$('pm-lbl-sh');if(pmSh)pmSh.textContent=L.pbar_sh||'어깨 기울기';
   const pmHip=$('pm-lbl-hip');if(pmHip)pmHip.textContent=L.pbar_hip||'골반 기울기';
   const pmTrk=$('pm-lbl-trk');if(pmTrk)pmTrk.textContent=L.pbar_trk||'몸통 기울기';
-  const pmHal=$('pm-lbl-hal');if(pmHal)pmHal.textContent=(L.pbar_hal||'골반')+' 정렬';
-  const pmKn=$('pm-lbl-kn');if(pmKn)pmKn.textContent=(L.pbar_kn||'무릎')+' 정렬';
+  const pmHal=$('pm-lbl-hal');if(pmHal)pmHal.textContent=(L.pbar_hal||'골반')+(L.pbar_align||' 정렬'); // [Work48]
+  const pmKn=$('pm-lbl-kn');if(pmKn)pmKn.textContent=(L.pbar_kn||'무릎')+(L.pbar_align||' 정렬'); // [Work48]
   ['lho','rho','lk','rk'].forEach((id,i)=>{
     const el=$('pm-sub-'+id);if(el)el.textContent=i%2===0?(L.pbar_l||'좌'):(L.pbar_r||'우');
   });
@@ -4474,8 +4485,8 @@ function updatePosBar(pos, cmp){
   {const el=$('pm-lbl-sh');if(el)el.textContent=L45.pbar_sh||'어깨 기울기';}
   {const el=$('pm-lbl-hip');if(el)el.textContent=L45.pbar_hip||'골반 기울기';}
   {const el=$('pm-lbl-trk');if(el)el.textContent=L45.pbar_trk||'몸통 기울기';}
-  {const el=$('pm-lbl-hal');if(el)el.textContent=(L45.pbar_hal||'골반')+' 정렬';}
-  {const el=$('pm-lbl-kn');if(el)el.textContent=(L45.pbar_kn||'무릎')+' 정렬';}
+  {const el=$('pm-lbl-hal');if(el)el.textContent=(L45.pbar_hal||'골반')+(L45.pbar_align||' 정렬');} // [Work48]
+  {const el=$('pm-lbl-kn');if(el)el.textContent=(L45.pbar_kn||'무릎')+(L45.pbar_align||' 정렬');} // [Work48]
   ['lho','rho','lk','rk'].forEach((id,i)=>{
     const el=$('pm-sub-'+id);if(el)el.textContent=i%2===0?(L45.pbar_l||'좌'):(L45.pbar_r||'우');
   });
@@ -4684,7 +4695,7 @@ function drawPosOverlay(kps, pos){
     ctx.beginPath();ctx.arc(mid.x,mid.y,5,0,Math.PI*2);ctx.fillStyle=trunkCol;ctx.fill();
     if(pos.trunkLean!=null){
       // [FIX-TrunkDir v3] body-centric 투영으로 부호 자동 결정 → 단순 dv>0 판정
-      const dv=pos.trunkLean,side=dv>0?'우 ':'좌 ';
+      const dv=pos.trunkLean,side=dv>0?(TX[CL].lean_r||'우')+' ':(TX[CL].lean_l||'좌')+' '; // [Work48]
       const _fsT=9; // [FIX-Issue3] 라이브 화면 - 다른 레이블과 동일한 9px
       ctx.font=`bold ${_fsT}px -apple-system,sans-serif`;
       ctx.strokeStyle='rgba(0,0,0,.85)';ctx.lineWidth=3.5;ctx.textAlign='left';
